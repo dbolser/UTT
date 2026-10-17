@@ -46,6 +46,22 @@ class Params where
     env.defeqs df → (∀ l ∈ ls, l.WF univs) → ls.length = df.uvars →
     ∃ p r m1 m2, Pat p r ∧ p.Matches (df.lhs.instL ls) m1 m2 ∧
       r.2.OK (env.IsDefEqU univs Γ) m1 m2 ∧ df.rhs.instL ls = r.1.apply m1 m2
+  /-- The type of a constructor (`classify c = ctor/etaCtor`) is, in the universe context of the
+  constant, defeq to a Π-telescope `Ts` over an application of the inductive type `I` (at the
+  constant's own universe parameters) to `args`, at a sort `u` that is non-zero under every
+  universe assignment.  `Ts.length` is the classified arity and `I` is classified as an inductive
+  type with `args.length` indices.  The non-zero condition is what makes the instantiated sort
+  `SLevel.mk (u.inst ls) ≠ .zero` for every level list `ls`, as needed by the `SExpr` form
+  `Params.ctor_ty`; it excludes classifying constructors of universe-polymorphic inductives that
+  can be instantiated to `Prop` (e.g. `PUnit.{u}`). -/
+  ctor_tyV {c : Name} {cl : Classification} {ci : VConstant} :
+    (cl matches .ctor .. | .etaCtor ..) → classify c = some cl → env.constants c = some ci →
+    ∃ (I : Name) (Ts args : List VExpr) (u : VLevel),
+      Ts.length = cl.arity ∧ classify I = some (.indTy args.length) ∧ (∀ ns, u.eval ns ≠ 0) ∧
+      env.IsDefEq ci.uvars [] ci.type
+        (Ts.foldr .forallE
+          (args.foldr (fun A acc => acc.app A) (.const I (VLevel.params ci.uvars))))
+        (.sort u)
 open Params
 variable [Params]
 
@@ -1040,13 +1056,41 @@ theorem IsDefEqStrong.defeq : IsDefEqStrong Γ e1 e2 A → Γ ⊢ e1 ≡ e2 : A 
   | proofIrrel _ _ _ ih1 ih2 ih3 => exact .proofIrrel ih1 ih2 ih3
   | extra h1 h2 _ _ _ _ => exact .extra h1 h2
 
+theorem mk_instL_foldr_forallE (Ts : List VExpr) (X : VExpr) :
+    mk ((Ts.foldr .forallE X).instL vs) =
+      (Ts.map fun T => mk (T.instL vs)).foldr .forallE (mk (X.instL vs)) := by
+  induction Ts with
+  | nil => rfl
+  | cons T Ts ih => simp only [List.foldr_cons, List.map_cons, VExpr.instL, mk, ih]
+
+theorem mk_instL_foldr_app (args : List VExpr) (X : VExpr) :
+    mk ((args.foldr (fun A acc => acc.app A) X).instL vs) =
+      (args.map fun A => mk (A.instL vs)).foldr (fun A acc => acc.app A) (mk (X.instL vs)) := by
+  induction args with
+  | nil => rfl
+  | cons A args ih => simp only [List.foldr_cons, List.map_cons, VExpr.instL, mk, ih]
+
+/-- The `SExpr` form of `Params.ctor_tyV`, at any level list and in any context. -/
 theorem _root_.Lean4Lean.Params.ctor_ty
-    (hcl1 : Params.classify c = some cl) (hcl2 : cl matches .ctor .. | .etaCtor ..)
+    (hctor : cl matches .ctor .. | .etaCtor ..) (hcl : Params.classify c = some cl)
     (hci : env.constants c = some ci) (h_len : ls.length = ci.uvars) :
     ∃ (I : Name) (Ts args : List SExpr) (u : SLevel),
       Ts.length = cl.arity ∧ Params.classify I = some (.indTy args.length) ∧ u ≠ .zero ∧
       Γ ⊢ SExpr.mkInst ls ci.type ≡
-        Ts.foldr .forallE (args.foldr (fun A acc => acc.app A) (.const I ls)) : .sort u := sorry
+        Ts.foldr .forallE (args.foldr (fun A acc => acc.app A) (.const I ls)) : .sort u := by
+  obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
+  obtain ⟨I, Ts, args, u, hTs, hI, hu, H⟩ := Params.ctor_tyV hctor hcl hci
+  have hlen : vs.length = ci.uvars := by simpa using h_len
+  refine ⟨I, Ts.map fun T => mk (T.instL vs), args.map fun A => mk (A.instL vs),
+    .mk (u.inst vs), by simp [hTs], by simpa using hI, fun h => ?_, ?_⟩
+  · rw [SLevel.mk_of_wf (VLevel.WF.inst hvs)] at h
+    have := congrFun (congrArg Subtype.val h) []
+    simp only [VLevel.eval_inst, SLevel.zero, VLevel.eval] at this
+    exact hu _ this
+  · have := IsDefEq.mkS0 (H.instL hvs) Γ
+    rw [mk_instL_foldr_forallE, mk_instL_foldr_app] at this
+    rw [mkInst_map_mk hvs]
+    simpa only [VExpr.instL, mk, VLevel.inst_map_id hlen] using this
 
 theorem IsDefEq.hasType (H : Γ ⊢ e1 ≡ e2 : A) :
     Γ ⊢ e1 ≡ e1 : A ∧ Γ ⊢ e2 ≡ e2 : A := ⟨H.trans H.symm, H.symm.trans H⟩

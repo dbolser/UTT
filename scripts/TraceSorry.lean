@@ -41,5 +41,6 @@ def traceSorries (roots : List Name) : CoreM Unit := do
 #print axioms Lean4Lean.SExpr.Params.const_wf
 #print axioms Lean4Lean.SExpr.Params.defeq_wf
 #print axioms Lean4Lean.SExpr.Params.extra_pat
+#print axioms Lean4Lean.Params.ctor_ty
 #eval traceSorries [``Lean4Lean.SExpr.Params.const_wf, ``Lean4Lean.SExpr.Params.defeq_wf,
-  ``Lean4Lean.SExpr.Params.extra_pat]
+  ``Lean4Lean.SExpr.Params.extra_pat, ``Lean4Lean.Params.ctor_ty]
