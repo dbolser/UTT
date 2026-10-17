@@ -24,7 +24,6 @@ Run `lake env lean scripts/TraceSorry.lean`. Today it reports, for `IsDefEq'.uni
 | `IsDefEq.strong` | SExpr.lean | sorry; port of `Theory/Typing/Strong.lean` to SExpr |
 | `IsDefEq.subst` | SExpr.lean | sorry; follows from `strong` |
 | `IsDefEq.defeqDF_l'` | SExpr.lean | sorry; follows from `subst` |
-| `WHRed.determ` | SExpr.lean | sorry in the `extra` cases; pattern determinism |
 | `LR.adequacy`, `const` case | ShapeLogRelAdequacy.lean | **the real gap**: the logical relation records nothing about terms at inductive types, so rewrite rules cannot fire inside it, and the rule's right-hand side has no induction hypothesis |
 
 Hidden behind `strong`: `Params.ctor_ty` (sorry) and typing of environment
@@ -39,3 +38,4 @@ PR #37) and reflect the result back to `Theory/Typing/Injectivity.lean`.
 - `Ctx.SubstEq` redesigned (weakening constructor); `lift`, `lookup` proven.
   The old `lift` statement was unprovable.
 - `IsDefEq'.uniq` stated and derived.
+- `WHRed.determ` proven (pattern determinism; only `pat_simple`/`pat_uniq` needed).
