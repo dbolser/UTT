@@ -1042,23 +1042,97 @@ theorem WHNF.lam : WHNF Γ (.lam A e) := nofun
 theorem WHNF.sort : WHNF Γ (.sort A) := nofun
 theorem WHNF.forallE : WHNF Γ (.forallE A B) := nofun
 
+omit [Params] in
+theorem _root_.Lean4Lean.Subpattern.varN_const (H : Subpattern p (.varN (.const c) n)) :
+    ∃ n, p = .varN (.const c) n := by
+  generalize eq : Pattern.varN (.const c) n = p' at H
+  induction H generalizing n with
+  | refl => exact ⟨_, eq.symm⟩
+  | appL | appR => cases n <;> cases eq
+  | varL _ ih => cases n <;> cases eq; exact ih rfl
+
+theorem _root_.Lean4Lean.Pattern.MatchesS.determ
+    (h1 : Pattern.MatchesS p e m1 m2) (h2 : Pattern.MatchesS p e m1' m2') :
+    m1 = m1' ∧ m2 = m2' := by
+  induction h1 generalizing m1' with
+  | const => let .const := h2; simp
+  | app l1 l2 ih1 ih2 => let .app r1 r2 := h2; simp [ih1 r1, ih2 r2]; rfl
+  | var l1 ih1 => let .var r1 := h2; simp [ih1 r1]
+
+theorem _root_.Lean4Lean.Pattern.matchesS_inter {p q : Pattern} {e : SExpr}
+    {m1 m3 : List SLevel} {m2 : p.Path → SExpr} {m4 : q.Path → SExpr}
+    (hp : p.MatchesS e m1 m2) (hq : q.MatchesS e m3 m4) : ∃ r, p.inter q = some r := by
+  induction hp generalizing q m3 m4 with
+  | const => cases hq; simp [Pattern.inter]
+  | var _ ih =>
+    cases hq with
+    | var h => obtain ⟨_, h⟩ := ih h; simp [Pattern.inter, h]
+    | app h _ => obtain ⟨_, h⟩ := ih h; simp [Pattern.inter, h]
+  | app _ _ ihf iha =>
+    cases hq with
+    | var h => obtain ⟨_, h⟩ := ihf h; simp [Pattern.inter, h]
+    | app hf ha =>
+      obtain ⟨_, hf⟩ := ihf hf; obtain ⟨_, ha⟩ := iha ha
+      simp [Pattern.inter, hf, ha]
+
+theorem _root_.Lean4Lean.Pattern.MatchesS.varN_const_lam
+    (h : Pattern.MatchesS (.varN (.const c) n) (.lam A b) m1 m2) : False := by
+  cases n <;> simp only [Pattern.varN] at h <;> nomatch h
+
+omit [Params] in
+theorem _root_.Lean4Lean.Pattern.ne_app_self {f a : Pattern} : f ≠ .app f a := by
+  intro h; have := congrArg sizeOf h; simp at this; omega
+
+theorem WHNF.subpattern
+    (h1 : Pat p r) (h2 : Subpattern p₁ p) (h3 : p₁ ≠ p) (h4 : p₁.MatchesS e m1 m2) :
+    WHNF Γ e := by
+  intro _ H2
+  obtain ⟨c, n, rfl⟩ : ∃ c n, p₁ = .varN (.const c) n := by
+    obtain ⟨_|_, rfl⟩ := pat_simple h1 <;> cases h2 <;>
+      first | cases h3 rfl | exact ⟨_, Subpattern.varN_const ‹_›⟩
+  induction H2 generalizing n with
+  | app r1 ih =>
+    let n+1 := n; let .var h4 := h4
+    refine ih _ (.trans (.varL .refl) h2) ?_ h4
+    rintro rfl; have := h2.sizeOf_le; simp [Pattern.varN] at this; omega
+  | beta => let n+1 := n; let .var h4 := h4; exact h4.varN_const_lam
+  | extra r1 r2 =>
+    have ⟨_, a1⟩ := Pattern.matchesS_inter r2 h4
+    obtain ⟨rfl, eq, _⟩ := pat_uniq h1 r1 h2 a1
+    exact h3 eq.symm
+
+theorem WHNF.pat_app_l (h1 : Pat p r) (h2 : p.MatchesS (.app f a) m1 m2) : WHNF Γ f := by
+  obtain ⟨_|_, rfl⟩ := pat_simple h1
+  · let .app h3 _ := h2
+    exact WHNF.subpattern h1 (.appL .refl) Pattern.ne_app_self h3
+  · nomatch h2
+
 theorem WHRed.determ (H1 : Γ ⊢ e ⤳ e₁) (H2 : Γ ⊢ e ⤳ e₂) : e₁ = e₂ := by
   induction H1 generalizing e₂ with
   | app l1 ih =>
     cases H2 with
     | app r1 => cases ih r1; rfl
     | beta => cases WHNF.lam _ l1
-    | extra => sorry
+    | extra r1 r2 => cases WHNF.pat_app_l r1 r2 _ l1
   | beta =>
     cases H2 with
     | app r1 => cases WHNF.lam _ r1
     | beta => rfl
-    | extra _ r2 => sorry
-  | extra _ l2 =>
+    | extra r1 r2 =>
+      obtain ⟨_|_, rfl⟩ := pat_simple r1
+      · let .app r3 _ := r2; exact r3.varN_const_lam.elim
+      · nomatch r2
+  | extra l1 l2 =>
     cases H2 with
-    | beta => sorry
-    | app => sorry
-    | extra _ r2 => sorry
+    | beta =>
+      obtain ⟨_|_, rfl⟩ := pat_simple l1
+      · let .app l3 _ := l2; exact l3.varN_const_lam.elim
+      · nomatch l2
+    | app r1 => cases WHNF.pat_app_l l1 l2 _ r1
+    | extra r1 r2 =>
+      have ⟨_, a1⟩ := Pattern.matchesS_inter r2 l2
+      obtain ⟨rfl, -, ⟨⟩⟩ := pat_uniq l1 r1 .refl a1
+      obtain ⟨rfl, rfl⟩ := l2.determ r2; rfl
 
 def WHRedS (Γ : List SExpr) : SExpr → SExpr → Prop := ReflTransGen (WHRed Γ)
 scoped notation:65 Γ " ⊢ " e1 " ⤳* " e2:36 => WHRedS Γ e1 e2
