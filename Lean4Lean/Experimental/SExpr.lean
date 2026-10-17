@@ -185,6 +185,18 @@ theorem map_mk_inj (hls : ∀ l ∈ ls, l.WF univs) (hls' : ∀ l ∈ ls', l.WF 
       exact .cons (mk_inj (hls _ (by simp)) (hls' _ (by simp)) h.1)
         (ih (fun _ hu => hls _ (by simp [hu])) (fun _ hu => hls' _ (by simp [hu])) h.2)
 
+/-- Every semantic level is the image of a well-formed syntactic level. -/
+theorem exists_mk (u : SLevel) : ∃ l : VLevel, l.WF univs ∧ mk l = u :=
+  let ⟨l, h1, h2⟩ := u.2; ⟨l, h1, by rw [mk_of_wf h1]; exact Subtype.ext h2⟩
+
+theorem exists_map_mk : ∀ ls : List SLevel,
+    ∃ vs : List VLevel, (∀ l ∈ vs, l.WF univs) ∧ vs.map mk = ls
+  | [] => ⟨[], nofun, rfl⟩
+  | u :: ls =>
+    let ⟨l, h1, h2⟩ := exists_mk u
+    let ⟨vs, h3, h4⟩ := exists_map_mk ls
+    ⟨l :: vs, List.forall_mem_cons.2 ⟨h1, h3⟩, by simp [h2, h4]⟩
+
 end SLevel
 
 inductive SExpr where
@@ -319,6 +331,30 @@ theorem mk_instL {e : VExpr} {ls : List VLevel}
     apply List.map_congr_left
     intro u hu
     exact SLevel.mk_inst (he u hu) hls
+
+/-- Every `SExpr` is the image of a level-well-formed `VExpr`. -/
+theorem exists_mk : ∀ e : SExpr, ∃ e' : VExpr, e'.LevelWF univs ∧ mk e' = e
+  | .bvar i => ⟨.bvar i, ⟨⟩, rfl⟩
+  | .sort u => let ⟨l, h1, h2⟩ := SLevel.exists_mk u; ⟨.sort l, h1, by simp [mk, h2]⟩
+  | .const c ls =>
+    let ⟨vs, h1, h2⟩ := SLevel.exists_map_mk ls; ⟨.const c vs, h1, by simp [mk, h2]⟩
+  | .app f a =>
+    let ⟨f', hf1, hf2⟩ := exists_mk f; let ⟨a', ha1, ha2⟩ := exists_mk a
+    ⟨.app f' a', ⟨hf1, ha1⟩, by simp [mk, hf2, ha2]⟩
+  | .lam A b =>
+    let ⟨A', hA1, hA2⟩ := exists_mk A; let ⟨b', hb1, hb2⟩ := exists_mk b
+    ⟨.lam A' b', ⟨hA1, hb1⟩, by simp [mk, hA2, hb2]⟩
+  | .forallE A B =>
+    let ⟨A', hA1, hA2⟩ := exists_mk A; let ⟨B', hB1, hB2⟩ := exists_mk B
+    ⟨.forallE A' B', ⟨hA1, hB1⟩, by simp [mk, hA2, hB2]⟩
+
+/-- Every `SExpr` context is the image of a level-well-formed `VExpr` context. -/
+theorem exists_map_mk : ∀ Γ : List SExpr,
+    ∃ Γ' : List VExpr, OnCtx Γ' (fun _ A => A.LevelWF univs) ∧ Γ'.map mk = Γ
+  | [] => ⟨[], ⟨⟩, rfl⟩
+  | A :: Γ =>
+    let ⟨A', h1, h2⟩ := exists_mk A; let ⟨Γ', h3, h4⟩ := exists_map_mk Γ
+    ⟨A' :: Γ', ⟨h3, h1⟩, by simp [h2, h4]⟩
 
 theorem _root_.Lean4Lean.VExpr.ClosedN.mkS : ∀ {e : VExpr}, e.ClosedN k → ClosedN (.mk e) k
   | .bvar .., h | .sort .., h | .const .., h => h
@@ -840,6 +876,31 @@ theorem IsDefEq.mkS (H : Params.env.IsDefEq Params.univs Γ e₁ e₂ A) :
   | @extra df ls Γ h₁ h₂ h₃ =>
     simpa only [mkInst_map_mk h₂] using
       (IsDefEq.extra (Γ := Γ.map mk) (ls := ls.map SLevel.mk) h₁ (by simpa using h₃))
+
+/-- Translate an empty-context `VExpr` judgment into an arbitrary `SExpr` context. -/
+theorem IsDefEq.mkS0 (H : Params.env.IsDefEq Params.univs [] e₁ e₂ A) (Γ : List SExpr) :
+    IsDefEq Γ (mk e₁) (mk e₂) (mk A) :=
+  let ⟨_, hΓ', h⟩ := SExpr.exists_map_mk Γ
+  h ▸ IsDefEq.mkS (H.weak0 Params.henv) hΓ'
+
+/-- Constant types are well-formed types, in any context. -/
+theorem Params.const_wf (h : env.constants c = some ci) :
+    ∃ u, Γ ⊢ mkInst ls ci.type : .sort u := by
+  obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
+  have ⟨_, hu⟩ := Params.henv.constWF h
+  rw [mkInst_map_mk hvs]
+  exact ⟨_, IsDefEq.mkS0 (hu.instL hvs) Γ⟩
+
+/-- Defeq rules are well-typed: the type is a type and both sides inhabit it, in any context. -/
+theorem Params.defeq_wf (h : env.defeqs df) :
+    (∃ u, Γ ⊢ mkInst ls df.type : .sort u) ∧
+    Γ ⊢ mkInst ls df.lhs : mkInst ls df.type ∧ Γ ⊢ mkInst ls df.rhs : mkInst ls df.type := by
+  obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
+  have ⟨hl, hr⟩ := Params.henv.defEqWF h
+  have ⟨_, hu⟩ := hl.isType Params.henv (by trivial)
+  simp only [mkInst_map_mk hvs]
+  exact ⟨⟨_, IsDefEq.mkS0 (hu.instL hvs) Γ⟩,
+    IsDefEq.mkS0 (hl.instL hvs) Γ, IsDefEq.mkS0 (hr.instL hvs) Γ⟩
 
 axiom Params.extra_pat (Γ) : env.defeqs df → ls.length = df.uvars →
   ∃ p r m1 m2 dfs, Pat p r ∧ p.MatchesS (.mkInst ls df.lhs) m1 m2 ∧

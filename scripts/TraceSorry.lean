@@ -36,3 +36,8 @@ def traceSorries (roots : List Name) : CoreM Unit := do
 #eval traceSorries [``Lean4Lean.SExpr.IsDefEq.mkS, ``Lean4Lean.VEnv.IsDefEq.of_mk_eq]
 #eval traceSorries [``Lean4Lean.VEnv.IsDefEqU.sort_invS, ``Lean4Lean.VEnv.IsDefEqU.sort_forallE_invS,
   ``Lean4Lean.VEnv.IsDefEqU.forallE_invS]
+
+-- Environment assumptions, translated from `Params.henv` / the VExpr-level `Params` fields.
+#print axioms Lean4Lean.SExpr.Params.const_wf
+#print axioms Lean4Lean.SExpr.Params.defeq_wf
+#eval traceSorries [``Lean4Lean.SExpr.Params.const_wf, ``Lean4Lean.SExpr.Params.defeq_wf]
