@@ -5083,7 +5083,7 @@ theorem LE_Interp.strongSound (H : Γ ⊢ M ≡ N : A) : StrongSoundEq Γ M N A 
     induction h with cases eq | const b1 b2 b3 b4 b5 b6 b7 => ?_ | bot =>
       exact .mk .rfl .bot .bot (.bot_T' <| .bot .sort)
     cases a1.symm.trans b1; exact .mk b3 (.const b1 b2 .rfl b4 b5 b6 b7) b5 b4
-  | appDF _ _ _ _ ihA ih1 ih2 ih3 =>
+  | appDF _ _ _ _ _ ihA _ ih1 ih2 ih3 =>
     refine .mk' (.appDF ih1.defeq ih2.defeq)
       (.app ihA.left.sound ih1.left ih2.left) .rfl
       (.app ihA.left.sound ih1.right ih2.right) ih3.sound.symm fun _ _ W m => ?_

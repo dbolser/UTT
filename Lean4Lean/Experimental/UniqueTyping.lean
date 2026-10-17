@@ -151,7 +151,7 @@ theorem IsDefEq.toHasTypeS {Γ : List SExpr} {e₁ e₂ A : SExpr}
   | sort => exact ⟨.base .sort', .base .sort'⟩
   | const h1 h2 _ _ _ ih_T =>
     exact and_self_iff.2 <| .base <| .const h1 h2 ih_T.1
-  | appDF _ _ _ h_Ba _ ih_f ih_a ih_Ba =>
+  | appDF _ _ _ _ h_Ba _ _ ih_f ih_a ih_Ba =>
     exact ⟨.base (.app ih_f.1 ih_a.1), .defeq h_Ba.symm.defeq (.base (.app ih_f.2 ih_a.2))⟩
   | lamDF h_A _ _ _ ih_A ih_B ih_body ih_body' =>
     refine ⟨.base (.lam ih_A.1 ih_body.1), ?_⟩

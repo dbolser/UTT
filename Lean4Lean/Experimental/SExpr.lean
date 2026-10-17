@@ -1041,7 +1041,7 @@ inductive IsDefEqStrong : List SExpr → SExpr → SExpr → SExpr → Prop wher
     (F : ∀ cl, CtorBundle c cl) →
     (∀ cl, Γ ⊢ SExpr.mkInst ls ci.type ≡ (F cl).rhs ls : .sort (F cl).u) →
     Γ ⊢ .const c ls : SExpr.mkInst ls ci.type
-  | appDF : Γ ⊢ A : .sort u →
+  | appDF : Γ ⊢ A : .sort u → A::Γ ⊢ B : .sort v →
     Γ ⊢ f ≡ f' : .forallE A B → Γ ⊢ a ≡ a' : A →
     Γ ⊢ B.inst a ≡ B.inst a' : .sort v →
     Γ ⊢ .app f a ≡ .app f' a' : B.inst a
@@ -1074,7 +1074,7 @@ theorem IsDefEqStrong.defeq : IsDefEqStrong Γ e1 e2 A → Γ ⊢ e1 ≡ e2 : A 
   | trans' _ _ ih1 ih2 => exact .trans' ih1 ih2
   | sort => exact .sort
   | const h1 h2 _ _ _ _ _ => exact .const h1 h2
-  | appDF _ _ _ _ _ ihf iha _ => exact .appDF ihf iha
+  | appDF _ _ _ _ _ _ _ ihf iha _ => exact .appDF ihf iha
   | lamDF _ _ _ _ ihA _ ihb _ => exact .lamDF ihA ihb
   | forallEDF _ _ _ ihA ihb _ => exact .forallEDF ihA ihb
   | defeqDF _ _ ih1 ih2 => exact .defeqDF ih1 ih2
