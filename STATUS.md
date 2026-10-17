@@ -20,15 +20,21 @@ Run `lake env lean scripts/TraceSorry.lean`. Today it reports, for `IsDefEq'.uni
 
 | gap | file | kind |
 |---|---|---|
-| `IsDefEq.strong` | SExpr.lean | sorry; port of `Theory/Typing/Strong.lean` to SExpr. **False as stated**: needs a well-formed-context hypothesis (proof in scratch, being integrated) |
-| `IsDefEq.subst` | SExpr.lean | sorry; follows from `strong` (same hypothesis) |
-| `IsDefEq.defeqDF_l'` | SExpr.lean | sorry; proven in scratch as stated |
 | `LR.adequacy`, `const` case | ShapeLogRelAdequacy.lean | **the real gap**: the logical relation records nothing about terms at inductive types, so rewrite rules cannot fire inside it, and the rule's right-hand side has no induction hypothesis |
 
-No custom axioms remain: `Params.extra_pat` and `Params.ctor_ty` are now
-theorems derived from VExpr-level `Params` fields (`extra_patV`, `ctor_tyV`),
-and typing of environment constants in `SExpr` (`Params.const_wf`,
-`Params.defeq_wf`) is derived from `henv` through the translation.
+`IsDefEq.strong`, `IsDefEq.subst`, `IsDefEq.defeqDF_l'` and `IsDefEq.isType` are
+proven (port of `Theory/Typing/Strong.lean` to `SExpr`, with the extra premise
+`A::Γ ⊢ B : .sort v` on `IsDefEqStrong.appDF`). `strong`/`subst`/`isType` and
+everything downstream (`LR.adequacy`, the inversion theorems, `HasTypeS.uniq`,
+`IsDefEq'.uniq`) take a well-formed-context hypothesis `⊢ Γ`; the unconditioned
+statement is false (`IsDefEq.strong_counterexample`).
+
+No custom axioms remain: `Params.extra_pat` and `Params.ctor_ty` are theorems
+derived from VExpr-level `Params` fields (`extra_patV`, and the syntactic
+`ctor_syn`/`ctor_sort`, which replace the former defeq field `ctor_tyV`: a
+defeq in the full environment cannot discharge the strong `const` rule's ctor
+premise). Strong typing of every environment object (`Params.envStrongS`) is
+derived from `henv` through the strong translation `VEnv.IsDefEqStrong.mkS`.
 
 Bridge: `SExpr.IsDefEq.mkS` translates `VEnv.IsDefEq` into `SExpr.IsDefEq`
 (port of closed upstream PR #37, with the `mkInst` fix). VExpr-level sort
