@@ -10,9 +10,12 @@ unique typing (see `STATUS.md` §6), with the Lean experiments that back them.
   of the paper's Lean artifact (`DomainSemantics`, ℕ and the fixpoint
   combinator) to arbitrary inductive types (`CtorClause.lean`).
 
-The `.lean` files are experiments, not part of the build. They were written
-against snapshots of this branch (commits `8fae8db` and `cb5fae8`) and begin
-with `import Lean4Lean.Experimental.ShapeLogRelAdequacy`; some contain
-deliberate `sorry`s marking the statements under design. References to
-`/tmp/utt-snap1`, `/tmp/utt-snap3` and `/tmp/utt-exp/...` in the documents
-are those snapshots and scratch directories.
+The `.lean` files are experiments, not part of the build. They begin with
+`import Lean4Lean.Experimental.ShapeLogRelAdequacy`; some contain deliberate
+`sorry`s marking the statements under design. `./check.sh` typechecks all
+four against the current tree (they were written against earlier snapshots,
+commits `8fae8db` and `cb5fae8`, and have been kept compiling since).
+References to `/tmp/utt-snap1`, `/tmp/utt-snap3`, `/tmp/utt-exp/...` and
+`/tmp/utt-ref/paper-artifacts/...` in the documents are those snapshots, the
+scratch directories, and a local copy of the paper's supplementary Lean code
+(`domain-semantics-lean-BEE7`).

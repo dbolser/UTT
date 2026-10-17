@@ -80,10 +80,10 @@ theorem LR.SubstWF.push_any_at_ctor
     (xs : WShape (k+1)) (hxs : xs.HasType .indTy) :
     LR.SubstWF Γ₀ (σ.cons x) (σ.cons x) (.const N ls :: Γ) (ρ.push xs.T) := by
   refine .cons (σ := σ.cons x) (σ' := σ.cons x) W
-    (fun ha => InterpTyped.hsort (fun h => (LE_Interp.sound hNty W.fits).2 h) ha) hI hxs.T hNty ?_
+    (fun ha => InterpTyped.hsort (fun h => (LE_Interp.sound W.wf hNty W.fits).2 h) ha) hI hxs.T hNty ?_
   refine ⟨hx, fun n a ha => ?_⟩
   have ha' : LE_Interp ρ a.T (.const N ls) := LE_Interp.weak_iff.1 ha
-  exact ⟨fun _ => ⟨⟨_, hNty.subst W.left.toSubstEq⟩, (LR.trivial_at_indTy hN ha' _ _ x x).1⟩,
+  exact ⟨fun _ => ⟨⟨_, hNty.subst W.wf₀ W.left.toSubstEq⟩, (LR.trivial_at_indTy hN ha' _ _ x x).1⟩,
     fun m _ _ => (LR.trivial_at_indTy hN ha' _ (.const N ls) x x).2 m⟩
 
 end Lean4Lean.SExpr
