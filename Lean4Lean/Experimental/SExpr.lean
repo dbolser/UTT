@@ -71,6 +71,9 @@ theorem mk_eq (hl : l.WF univs) (hl' : l'.WF univs) (h : l ≈ l') : mk l = mk l
 
 theorem mk_val (h : l.WF univs) : (mk l).1 = l.eval := by rw [mk_of_wf h]
 
+theorem mk_inj (hl : l.WF univs) (hl' : l'.WF univs) (h : mk l = mk l') : l ≈ l' :=
+  VLevel.equiv_def'.2 (by rw [← mk_val hl, ← mk_val hl', h])
+
 def succ (l : SLevel) : SLevel :=
   ⟨fun v => l.1 v + 1, let ⟨u, h1, h2⟩ := l.2; ⟨u.succ, h1, h2 ▸ rfl⟩⟩
 
@@ -169,6 +172,18 @@ theorem map_mk_eq (hls : ∀ l ∈ ls, l.WF univs) (hls' : ∀ l ∈ ls', l.WF u
     simp only [List.map_cons]
     rw [mk_eq (hls _ (by simp)) (hls' _ (by simp)) h,
       ih (fun _ hu => hls _ (by simp [hu])) (fun _ hu => hls' _ (by simp [hu]))]
+
+theorem map_mk_inj (hls : ∀ l ∈ ls, l.WF univs) (hls' : ∀ l ∈ ls', l.WF univs)
+    (h : ls.map mk = ls'.map mk) : List.Forall₂ (· ≈ ·) ls ls' := by
+  induction ls generalizing ls' with
+  | nil => cases ls' with | nil => exact .nil | cons => cases h
+  | cons l ls ih =>
+    cases ls' with
+    | nil => cases h
+    | cons l' ls' =>
+      simp only [List.map_cons, List.cons.injEq] at h
+      exact .cons (mk_inj (hls _ (by simp)) (hls' _ (by simp)) h.1)
+        (ih (fun _ hu => hls _ (by simp [hu])) (fun _ hu => hls' _ (by simp [hu])) h.2)
 
 end SLevel
 

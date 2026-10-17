@@ -33,3 +33,6 @@ def traceSorries (roots : List Name) : CoreM Unit := do
 #eval traceSorries [``Lean4Lean.SExpr.IsDefEq.toHasTypeS]
 #eval traceSorries [``Lean4Lean.SExpr.forallE_inv, ``Lean4Lean.SExpr.sort_inv, ``Lean4Lean.SExpr.sort_forallE_inv]
 #eval traceSorries [``Lean4Lean.SExpr.LR.adequacy]
+#eval traceSorries [``Lean4Lean.SExpr.IsDefEq.mkS, ``Lean4Lean.VEnv.IsDefEq.of_mk_eq]
+#eval traceSorries [``Lean4Lean.VEnv.IsDefEqU.sort_invS, ``Lean4Lean.VEnv.IsDefEqU.sort_forallE_invS,
+  ``Lean4Lean.VEnv.IsDefEqU.forallE_invS]

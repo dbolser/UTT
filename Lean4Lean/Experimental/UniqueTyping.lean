@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+import Lean4Lean.Theory.Typing.Strong
 
 /-! # Unique typing over the SExpr weak defeq.
 
@@ -261,6 +262,95 @@ theorem IsDefEq.toIsDefEq' {Γ : List SExpr} {e₁ e₂ A : SExpr}
 theorem IsDefEq.iff_isDefEq' {Γ : List SExpr} {e₁ e₂ A : SExpr} :
     Γ ⊢ e₁ ≡ e₂ : A ↔ Γ ⊢' e₁ ≡ e₂ : A :=
   ⟨IsDefEq.toIsDefEq', IsDefEq'.toIsDefEq⟩
+
+/-! ## Reflection to `VExpr`
+
+`IsDefEq.mkS` translates `VEnv.IsDefEq` into `SExpr.IsDefEq`. The results below
+pull the SExpr-side inversion theorems back to `VExpr`. Conclusions that are
+*equalities* (of levels, or of translated terms) reflect fully, using
+`SLevel.mk_inj` and `EqUpToLevels.of_mk_eq`. Conclusions that are SExpr
+*defeqs* (Pi injectivity) stay on the SExpr side: translating
+`SExpr.IsDefEq` back into `VEnv.IsDefEq` would need the `trans'` elimination
+(`IsDefEq.toIsDefEq'`) plus a representative-choosing inverse of `mk`, which
+is not available. -/
+
+/-- A defeq whose left side is a sort can be retyped at the canonical sort. -/
+theorem IsDefEq.sort_retype (h : Γ ⊢ .sort u ≡ e : T) :
+    Γ ⊢ .sort u ≡ e : .sort (.succ u) :=
+  have ⟨_, eq⟩ := h.toHasTypeS.1.uniq (.sort' (Γ := Γ))
+  eq.defeqDF h
+
+/-- A defeq whose left side is a Pi can be retyped at some sort. -/
+theorem IsDefEq.forallE_retype (h : Γ ⊢ .forallE A B ≡ e : T) :
+    ∃ s, Γ ⊢ .forallE A B ≡ e : .sort s := by
+  obtain ⟨_, h2, -⟩ := h.toHasTypeS.1.toStructural
+  have ⟨_, eq⟩ := h.toHasTypeS.1.uniq h2
+  cases h2; exact ⟨_, eq.defeqDF h⟩
+
+omit [Params] in
+theorem _root_.Lean4Lean.OnCtx.levelWF {env : VEnv} {Γ : List VExpr}
+    (hΓ : OnCtx Γ (env.IsType U)) : OnCtx Γ fun _ A => A.LevelWF U := by
+  induction Γ with
+  | nil => trivial
+  | cons A Γ ih => have ⟨_, h⟩ := hΓ.2; exact ⟨ih hΓ.1, (h.levelWF (ih hΓ.1)).1⟩
+
+/-- `mk` is injective up to level equivalence on level-well-formed expressions. -/
+theorem _root_.Lean4Lean.VEnv.EqUpToLevels.of_mk_eq : ∀ {e e' : VExpr},
+    e.LevelWF univs → e'.LevelWF univs → mk e = mk e' → VEnv.EqUpToLevels univs e e'
+  | .bvar _, .bvar _, _, _, h => by
+    simp only [mk, SExpr.bvar.injEq] at h; cases h; exact .bvar
+  | .sort _, .sort _, hl, hl', h => by
+    simp only [mk, SExpr.sort.injEq] at h; exact .sort hl hl' (SLevel.mk_inj hl hl' h)
+  | .const _ _, .const _ _, hls, hls', h => by
+    simp only [mk, SExpr.const.injEq] at h; obtain ⟨rfl, h⟩ := h
+    exact .const hls hls' (SLevel.map_mk_inj hls hls' h)
+  | .app .., .app .., ⟨h1, h2⟩, ⟨h1', h2'⟩, h => by
+    simp only [mk, SExpr.app.injEq] at h; exact .app (.of_mk_eq h1 h1' h.1) (.of_mk_eq h2 h2' h.2)
+  | .lam .., .lam .., ⟨h1, h2⟩, ⟨h1', h2'⟩, h => by
+    simp only [mk, SExpr.lam.injEq] at h; exact .lam (.of_mk_eq h1 h1' h.1) (.of_mk_eq h2 h2' h.2)
+  | .forallE .., .forallE .., ⟨h1, h2⟩, ⟨h1', h2'⟩, h => by
+    simp only [mk, SExpr.forallE.injEq] at h
+    exact .forallE (.of_mk_eq h1 h1' h.1) (.of_mk_eq h2 h2' h.2)
+
+/-- Reflection of syntactic equality: if `e₂'` translates to the same `SExpr` as
+`e₂`, any `VExpr` defeq to `e₂` is also a defeq to `e₂'`. -/
+theorem _root_.Lean4Lean.VEnv.IsDefEq.of_mk_eq {Γ : List VExpr}
+    (hΓ : OnCtx Γ (Params.env.IsType Params.univs))
+    (H : Params.env.IsDefEq Params.univs Γ e₁ e₂ A)
+    (he' : e₂'.LevelWF Params.univs) (h : mk e₂ = mk e₂') :
+    Params.env.IsDefEq Params.univs Γ e₁ e₂' A :=
+  H.eqUpToLevels Params.henv hΓ (.of_mk_eq (H.levelWF hΓ.levelWF).2.1 he' h)
+
+/-- Sort injectivity for `VExpr`: defeq sorts have equivalent levels. -/
+theorem _root_.Lean4Lean.VEnv.IsDefEqU.sort_invS {Γ : List VExpr}
+    (hΓ : OnCtx Γ fun _ A => A.LevelWF Params.univs)
+    (h : Params.env.IsDefEqU Params.univs Γ (.sort u) (.sort v)) : u ≈ v :=
+  have ⟨_, h⟩ := h
+  SLevel.mk_inj (h.levelWF hΓ).1 (h.levelWF hΓ).2.1 (sort_inv (IsDefEq.mkS h hΓ))
+
+/-- A sort is never defeq to a Pi type (`VExpr`). -/
+theorem _root_.Lean4Lean.VEnv.IsDefEqU.sort_forallE_invS {Γ : List VExpr}
+    (hΓ : OnCtx Γ fun _ A => A.LevelWF Params.univs)
+    (h : Params.env.IsDefEqU Params.univs Γ (.sort u) (.forallE A B)) : False :=
+  have ⟨_, h⟩ := h
+  sort_forallE_inv (IsDefEq.mkS h hΓ).sort_retype
+
+/-- Pi injectivity for `VExpr`, with the conclusion on the `SExpr` side. -/
+theorem _root_.Lean4Lean.VEnv.IsDefEqU.forallE_invS {Γ : List VExpr}
+    (hΓ : OnCtx Γ fun _ A => A.LevelWF Params.univs)
+    (h : Params.env.IsDefEqU Params.univs Γ (.forallE A B) (.forallE A' B')) :
+    ∃ u v, IsDefEq (Γ.map mk) (mk A) (mk A') (.sort u) ∧
+      IsDefEq (mk A :: Γ.map mk) (mk B) (mk B') (.sort v) :=
+  have ⟨_, h⟩ := h
+  have ⟨_, h'⟩ := (IsDefEq.mkS h hΓ).forallE_retype
+  forallE_inv h'
+
+#print axioms IsDefEq.mkS
+#print axioms VEnv.EqUpToLevels.of_mk_eq
+#print axioms VEnv.IsDefEq.of_mk_eq
+#print axioms VEnv.IsDefEqU.sort_invS
+#print axioms VEnv.IsDefEqU.sort_forallE_invS
+#print axioms VEnv.IsDefEqU.forallE_invS
 
 end SExpr
 end Lean4Lean
