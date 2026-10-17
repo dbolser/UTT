@@ -677,7 +677,23 @@ inductive IsDefEqStrong : List SExpr → SExpr → SExpr → SExpr → Prop wher
 end
 
 theorem IsDefEq.strong : Γ ⊢ e1 ≡ e2 : A → IsDefEqStrong Γ e1 e2 A := sorry
-theorem IsDefEqStrong.defeq : IsDefEqStrong Γ e1 e2 A → Γ ⊢ e1 ≡ e2 : A := sorry
+theorem IsDefEqStrong.defeq : IsDefEqStrong Γ e1 e2 A → Γ ⊢ e1 ≡ e2 : A := by
+  intro h
+  induction h with
+  | bvar h _ _ => exact .bvar h
+  | symm _ ih => exact .symm ih
+  | trans _ _ _ _ ih1 ih2 => exact .trans ih1 ih2
+  | trans' _ _ ih1 ih2 => exact .trans' ih1 ih2
+  | sort => exact .sort
+  | const h1 h2 _ _ _ _ _ => exact .const h1 h2
+  | appDF _ _ _ _ _ ihf iha _ => exact .appDF ihf iha
+  | lamDF _ _ _ _ ihA _ ihb _ => exact .lamDF ihA ihb
+  | forallEDF _ _ _ ihA ihb _ => exact .forallEDF ihA ihb
+  | defeqDF _ _ ih1 ih2 => exact .defeqDF ih1 ih2
+  | beta _ _ _ _ ih1 ih2 _ _ => exact .beta ih1 ih2
+  | eta _ _ ih _ => exact .eta ih
+  | proofIrrel _ _ _ ih1 ih2 ih3 => exact .proofIrrel ih1 ih2 ih3
+  | extra h1 h2 _ _ _ _ => exact .extra h1 h2
 
 theorem _root_.Lean4Lean.Params.ctor_ty
     (hcl1 : Params.classify c = some cl) (hcl2 : cl matches .ctor .. | .etaCtor ..)
