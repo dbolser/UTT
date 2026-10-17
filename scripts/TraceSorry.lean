@@ -40,4 +40,6 @@ def traceSorries (roots : List Name) : CoreM Unit := do
 -- Environment assumptions, translated from `Params.henv` / the VExpr-level `Params` fields.
 #print axioms Lean4Lean.SExpr.Params.const_wf
 #print axioms Lean4Lean.SExpr.Params.defeq_wf
-#eval traceSorries [``Lean4Lean.SExpr.Params.const_wf, ``Lean4Lean.SExpr.Params.defeq_wf]
+#print axioms Lean4Lean.SExpr.Params.extra_pat
+#eval traceSorries [``Lean4Lean.SExpr.Params.const_wf, ``Lean4Lean.SExpr.Params.defeq_wf,
+  ``Lean4Lean.SExpr.Params.extra_pat]

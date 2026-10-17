@@ -39,9 +39,13 @@ class Params where
   --   Subpattern (.app p₁' p₂') p' → Subpattern p₃ p₁ → Subpattern p₃' p₂' → p₃.inter p₃' = none
   -- pat_app_r_arity : Pat p r → Pat p' r' → Subpattern (.app p₁ p₂) p →
   --   Subpattern (.app p₁' p₂') p' → Arity (.const c) n p₂ → Arity (.const c) n' p₂' → n = n'
-  -- extra_pat : env.defeqs df → (∀ l ∈ ls, l.WF uvars) → ls.length = df.uvars →
-  --   ∃ p r m1 m2, Pat p r ∧ p.Matches (df.lhs.instL ls) m1 m2 ∧ r.2.OK (IsDefEqU env univs Γ) m1 m2 ∧
-  --   df.rhs.instL ls = r.1.apply m1 m2
+  /-- Every defeq rule of the environment, instantiated at well-formed levels, is an instance of
+  some pattern `p` (with its side conditions holding) whose right-hand side is the rule's rhs.
+  Stated on `VExpr`; the `SExpr` form is derived as `SExpr.Params.extra_pat`. -/
+  extra_patV {df : VDefEq} {ls : List VLevel} {Γ : List VExpr} :
+    env.defeqs df → (∀ l ∈ ls, l.WF univs) → ls.length = df.uvars →
+    ∃ p r m1 m2, Pat p r ∧ p.Matches (df.lhs.instL ls) m1 m2 ∧
+      r.2.OK (env.IsDefEqU univs Γ) m1 m2 ∧ df.rhs.instL ls = r.1.apply m1 m2
 open Params
 variable [Params]
 
@@ -902,11 +906,61 @@ theorem Params.defeq_wf (h : env.defeqs df) :
   exact ⟨⟨_, IsDefEq.mkS0 (hu.instL hvs) Γ⟩,
     IsDefEq.mkS0 (hl.instL hvs) Γ, IsDefEq.mkS0 (hr.instL hvs) Γ⟩
 
-axiom Params.extra_pat (Γ) : env.defeqs df → ls.length = df.uvars →
-  ∃ p r m1 m2 dfs, Pat p r ∧ p.MatchesS (.mkInst ls df.lhs) m1 m2 ∧
-    (dfs : List _).map (·.2) = r.2.defeqsS m1 m2 ∧
-    (∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) ∧
-    .mkInst ls df.rhs = r.1.applyS m1 m2
+/-! ### Translating the pattern theory along `mk` -/
+
+theorem _root_.Lean4Lean.Pattern.MatchesS.congr {p : Pattern} {e m1} {m2 m2' : p.Path → SExpr}
+    (H : p.MatchesS e m1 m2) (h : ∀ x, m2 x = m2' x) : p.MatchesS e m1 m2' := funext h ▸ H
+
+theorem _root_.Lean4Lean.Pattern.Matches.mkS {p : Pattern} {e : VExpr} {m1 m2}
+    (H : p.Matches e m1 m2) : p.MatchesS (mk e) (m1.map SLevel.mk) (fun x => mk (m2 x)) := by
+  induction H with
+  | const => exact Pattern.MatchesS.congr .const nofun
+  | var _ ih => exact ih.var.congr fun | none => rfl | some _ => rfl
+  | app _ _ ih1 ih2 => exact (ih1.app ih2).congr fun | .inl _ => rfl | .inr _ => rfl
+
+theorem _root_.Lean4Lean.Pattern.RHS.mkS_apply {p : Pattern} {m1 : List VLevel}
+    {m2 : p.Path → VExpr} (hm1 : ∀ u ∈ m1, u.WF univs) :
+    ∀ r : p.RHS, mk (r.apply m1 m2) = r.applyS (m1.map SLevel.mk) (fun x => mk (m2 x))
+  | .fixed _ _ => (mkInst_map_mk hm1).symm
+  | .var _ => rfl
+  | .app f a => by
+    simp only [Pattern.RHS.apply, Pattern.RHS.applyS, mk, mkS_apply hm1 f, mkS_apply hm1 a]
+
+/-- Side conditions that hold as `VExpr` defeqs translate to a list of `SExpr` defeqs. -/
+theorem _root_.Lean4Lean.Pattern.Check.OK.mkS {p : Pattern} {Γ : List VExpr} {m1 m2}
+    (hΓ : OnCtx Γ fun _ A => A.LevelWF univs) (hm1 : ∀ u ∈ m1, u.WF univs) :
+    ∀ {ck : p.Check}, ck.OK (env.IsDefEqU univs Γ) m1 m2 →
+    ∃ dfs : List (SExpr × SExpr × SExpr),
+      dfs.map (·.2) = ck.defeqsS (m1.map SLevel.mk) (fun x => mk (m2 x)) ∧
+      ∀ a b A, (A, a, b) ∈ dfs → IsDefEq (Γ.map mk) a b A
+  | .true, _ => ⟨[], rfl, nofun⟩
+  | .defeq a b rest, ⟨⟨A, h⟩, hrest⟩ =>
+    let ⟨dfs, h1, h2⟩ := Pattern.Check.OK.mkS hΓ hm1 hrest
+    ⟨(mk A, mk (a.apply m1 m2), mk (b.apply m1 m2)) :: dfs,
+      by simp only [List.map_cons, Pattern.Check.defeqsS, h1, Pattern.RHS.mkS_apply hm1],
+      by
+        intro a' b' A' h'
+        rcases List.mem_cons.1 h' with h' | h'
+        · cases h'; exact IsDefEq.mkS h hΓ
+        · exact h2 _ _ _ h'⟩
+
+/-- The `SExpr` form of `Params.extra_patV`: every instantiated defeq rule is a pattern
+instance whose side conditions hold in any `SExpr` context. -/
+theorem Params.extra_pat (Γ) : env.defeqs df → ls.length = df.uvars →
+    ∃ p r m1 m2 dfs, Pat p r ∧ p.MatchesS (.mkInst ls df.lhs) m1 m2 ∧
+      (dfs : List _).map (·.2) = r.2.defeqsS m1 m2 ∧
+      (∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) ∧
+      .mkInst ls df.rhs = r.1.applyS m1 m2 := by
+  intro h1 h2
+  obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
+  obtain ⟨Γ', hΓ', rfl⟩ := SExpr.exists_map_mk Γ
+  obtain ⟨p, r, m1, m2, hp, hm, hok, hr⟩ :=
+    Params.extra_patV (Γ := Γ') h1 hvs (by simpa using h2)
+  have hm1 := hm.levelWF (VExpr.LevelWF.instL hvs)
+  obtain ⟨dfs, hdfs, hdefeq⟩ := hok.mkS hΓ' hm1
+  refine ⟨p, r, _, _, dfs, hp, ?_, hdfs, hdefeq, ?_⟩
+  · rw [mkInst_map_mk hvs]; exact hm.mkS
+  · rw [mkInst_map_mk hvs, hr]; exact Pattern.RHS.mkS_apply hm1 _
 
 def CtorBundle.IsCtor (c : Name) : Prop :=
   ∃ cl, Params.classify c = some cl ∧ cl matches .ctor .. | .etaCtor ..
