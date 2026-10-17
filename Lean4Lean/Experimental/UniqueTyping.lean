@@ -264,3 +264,19 @@ theorem IsDefEq.iff_isDefEq' {Γ : List SExpr} {e₁ e₂ A : SExpr} :
 
 end SExpr
 end Lean4Lean
+
+namespace Lean4Lean.SExpr
+variable [Params]
+
+/-- **Unique typing** for the `trans'`-free system `IsDefEq'` (Lean's rules over `SExpr`),
+as a corollary of the `trans'` route: translate into the `trans'` system, apply
+`HasTypeS.uniq`, and translate back using the admissibility of `trans'`. -/
+theorem IsDefEq'.uniq {Γ : List SExpr} {e₁ e₂ e₃ A B : SExpr}
+    (h1 : IsDefEq' Γ e₁ e₂ A) (h2 : IsDefEq' Γ e₂ e₃ B) :
+    ∃ u, IsDefEq' Γ A B (.sort u) :=
+  let ⟨_, hA⟩ := h1.toIsDefEq.toHasTypeS
+  let ⟨hB, _⟩ := h2.toIsDefEq.toHasTypeS
+  let ⟨u, h⟩ := hA.uniq hB
+  ⟨u, h.toIsDefEq'⟩
+
+end Lean4Lean.SExpr

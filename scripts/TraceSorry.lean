@@ -28,7 +28,7 @@ def traceSorries (roots : List Name) : CoreM Unit := do
   IO.println s!"constants directly containing sorry ({direct.size}):"
   for d in direct.qsort (·.toString < ·.toString) do IO.println s!"  {d}"
 
-#eval traceSorries [``Lean4Lean.SExpr.IsDefEq.iff_isDefEq']
+#eval traceSorries [``Lean4Lean.SExpr.IsDefEq'.uniq]
 #eval traceSorries [``Lean4Lean.SExpr.HasTypeS.uniq]
 #eval traceSorries [``Lean4Lean.SExpr.IsDefEq.toHasTypeS]
 #eval traceSorries [``Lean4Lean.SExpr.forallE_inv, ``Lean4Lean.SExpr.sort_inv, ``Lean4Lean.SExpr.sort_forallE_inv]
