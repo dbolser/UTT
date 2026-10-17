@@ -90,7 +90,7 @@ theorem HasTypeS.toStructural (h : HasTypeS Γ e A b) :
 
 /-- Type uniqueness up to defeq: any two derivations of `e` give defeq-equivalent
 types. The middle `b` parameters are arbitrary. -/
-theorem HasTypeS.uniq {Γ : List SExpr} {e A B : SExpr} {b₁ b₂ : Bool}
+theorem HasTypeS.uniq {Γ : List SExpr} {e A B : SExpr} {b₁ b₂ : Bool} (hΓ : ⊢ Γ)
     (H1 : HasTypeS Γ e A b₁) (H2 : HasTypeS Γ e B b₂) :
     ∃ u, Γ ⊢ A ≡ B : .sort u := by
   induction H1 generalizing B b₂ with
@@ -111,73 +111,80 @@ theorem HasTypeS.uniq {Γ : List SExpr} {e A B : SExpr} {b₁ b₂ : Bool}
   | @app Γ' _ A _ a _ h_a ih_f _ =>
     obtain ⟨_, H2_s, transport⟩ := H2.toStructural
     let .app h_f' _ := H2_s
-    obtain ⟨_, h_pi_eq⟩ := ih_f h_f'
-    obtain ⟨_, _, h_A_eq, h_B_eq⟩ := SExpr.forallE_inv h_pi_eq
+    obtain ⟨_, h_pi_eq⟩ := ih_f hΓ h_f'
+    obtain ⟨_, _, h_A_eq, h_B_eq⟩ := SExpr.forallE_inv hΓ h_pi_eq
     have W : Ctx.SubstEq Γ' (.one a) (.one a) (A :: Γ') :=
       .cons .nil h_A_eq.hasType.1 (by simpa using h_a.hasType)
-    exact transport (h_B_eq.subst W)
+    exact transport (h_B_eq.subst hΓ W)
   | @lam _ _ _ _ body h_A _ _ ih_body =>
     obtain ⟨_, H2_s, transport⟩ := H2.toStructural
     let .lam _ h_body' := H2_s
-    obtain ⟨_, h_B_eq⟩ := ih_body h_body'
+    obtain ⟨_, h_B_eq⟩ := ih_body (Ctx.WF.cons hΓ h_A.hasType) h_body'
     exact transport (.forallEDF h_A.hasType h_B_eq)
   | forallE h_A h_b ih_A ih_b =>
     obtain ⟨_, H2_s, transport⟩ := H2.toStructural
     let .forallE h_A' h_b' := H2_s
-    obtain ⟨_, h_A_eq⟩ := ih_A h_A'
-    obtain ⟨_, h_b_eq⟩ := ih_b h_b'
-    cases SExpr.sort_inv h_A_eq
-    cases SExpr.sort_inv h_b_eq
+    obtain ⟨_, h_A_eq⟩ := ih_A hΓ h_A'
+    obtain ⟨_, h_b_eq⟩ := ih_b (Ctx.WF.cons hΓ h_A.hasType) h_b'
+    cases SExpr.sort_inv hΓ h_A_eq
+    cases SExpr.sort_inv (Ctx.WF.cons hΓ h_A.hasType) h_b_eq
     exact transport .sort
-  | base _ ih_s => exact ih_s H2
+  | base _ ih_s => exact ih_s hΓ H2
   | defeq d _ ihe =>
-    obtain ⟨_, eq⟩ := ihe H2
+    obtain ⟨_, eq⟩ := ihe hΓ H2
     exact ⟨_, d.symm.trans' eq⟩
 
 /-- Bridge from `IsDefEq` to `HasTypeS`. To be filled in once `IsDefEqStrong`
 is beefed up with the bundled witnesses needed by minimal `HasTypeS`. -/
 theorem IsDefEq.toHasTypeS {Γ : List SExpr} {e₁ e₂ A : SExpr}
-    (h : Γ ⊢ e₁ ≡ e₂ : A) : Γ ⊨ e₁ : A ∧ Γ ⊨ e₂ : A := by
-  replace h := h.strong
+    (hΓ : ⊢ Γ) (h : Γ ⊢ e₁ ≡ e₂ : A) : Γ ⊨ e₁ : A ∧ Γ ⊨ e₂ : A := by
+  replace h := h.strong hΓ
   induction h with
   | bvar h_l _ ih_A =>
-    refine and_self_iff.2 <| .base <| .bvar h_l ih_A.1
-  | symm _ ih => exact ⟨ih.2, ih.1⟩
-  | trans _ _ _ _ ih1 ih2 => exact ⟨ih1.1, ih2.2⟩
+    refine and_self_iff.2 <| .base <| .bvar h_l (ih_A hΓ).1
+  | symm _ ih => exact ⟨(ih hΓ).2, (ih hΓ).1⟩
+  | trans _ _ _ _ ih1 ih2 => exact ⟨(ih1 hΓ).1, (ih2 hΓ).2⟩
   | trans' _ _ ih1 ih2 =>
-    obtain ⟨_, eq⟩ := ih1.2.uniq ih2.1
-    cases SExpr.sort_inv eq
-    exact ⟨ih1.1, ih2.2⟩
+    obtain ⟨_, eq⟩ := (ih1 hΓ).2.uniq hΓ (ih2 hΓ).1
+    cases SExpr.sort_inv hΓ eq
+    exact ⟨(ih1 hΓ).1, (ih2 hΓ).2⟩
   | sort => exact ⟨.base .sort', .base .sort'⟩
   | const h1 h2 _ _ _ ih_T =>
-    exact and_self_iff.2 <| .base <| .const h1 h2 ih_T.1
-  | appDF _ _ _ _ h_Ba _ _ ih_f ih_a ih_Ba =>
-    exact ⟨.base (.app ih_f.1 ih_a.1), .defeq h_Ba.symm.defeq (.base (.app ih_f.2 ih_a.2))⟩
+    exact and_self_iff.2 <| .base <| .const h1 h2 (ih_T hΓ).1
+  | appDF _ _ _ _ h_Ba _ _ ih_f ih_a _ =>
+    exact ⟨.base (.app (ih_f hΓ).1 (ih_a hΓ).1),
+      .defeq h_Ba.symm.defeq (.base (.app (ih_f hΓ).2 (ih_a hΓ).2))⟩
   | lamDF h_A _ _ _ ih_A ih_B ih_body ih_body' =>
-    refine ⟨.base (.lam ih_A.1 ih_body.1), ?_⟩
-    exact .defeq (.symm <| .forallEDF h_A.defeq ih_B.1.hasType) (.base (.lam ih_A.2 ih_body'.2))
-  | forallEDF _ _ _ ih_A ih_body ih_body' =>
-    exact ⟨.base (.forallE ih_A.1 ih_body.1), .base (.forallE ih_A.2 ih_body'.2)⟩
+    have hΓ' := Ctx.WF.cons hΓ h_A.hasTypeS.1.defeq
+    have hΓ'' := Ctx.WF.cons hΓ h_A.hasTypeS.2.defeq
+    refine ⟨.base (.lam (ih_A hΓ).1 (ih_body hΓ').1), ?_⟩
+    exact .defeq (.symm <| .forallEDF h_A.defeq (ih_B hΓ').1.hasType)
+      (.base (.lam (ih_A hΓ).2 (ih_body' hΓ'').2))
+  | forallEDF h_A _ _ ih_A ih_body ih_body' =>
+    have hΓ' := Ctx.WF.cons hΓ h_A.hasTypeS.1.defeq
+    have hΓ'' := Ctx.WF.cons hΓ h_A.hasTypeS.2.defeq
+    exact ⟨.base (.forallE (ih_A hΓ).1 (ih_body hΓ').1),
+      .base (.forallE (ih_A hΓ).2 (ih_body' hΓ'').2)⟩
   | defeqDF d _ _ ih2 =>
-    exact ⟨.defeq d.defeq ih2.1, .defeq d.defeq ih2.2⟩
+    exact ⟨.defeq d.defeq (ih2 hΓ).1, .defeq d.defeq (ih2 hΓ).2⟩
   | beta _ _ _ _ _ _ ih_app ih_inst =>
-    exact ⟨ih_app.1, ih_inst.1⟩
+    exact ⟨(ih_app hΓ).1, (ih_inst hΓ).1⟩
   | eta _ _ ih_e ih_lam =>
-    exact ⟨ih_lam.1, ih_e.1⟩
+    exact ⟨(ih_lam hΓ).1, (ih_e hΓ).1⟩
   | proofIrrel _ _ _ _ ih_h ih_h' =>
-    exact ⟨ih_h.1, ih_h'.1⟩
+    exact ⟨(ih_h hΓ).1, (ih_h' hΓ).1⟩
   | extra _ _ _ _ ih_lhs ih_rhs =>
-    exact ⟨ih_lhs.1, ih_rhs.1⟩
+    exact ⟨(ih_lhs hΓ).1, (ih_rhs hΓ).1⟩
 
 
 /-- Sort uniqueness: if a middle term has two `sort`-types via defeq witnesses,
 the two sort levels coincide. -/
-theorem IsDefEq.uniq_sort {Γ : List SExpr} {e₁ e₂ e₃ : SExpr} {u v : SLevel}
+theorem IsDefEq.uniq_sort {Γ : List SExpr} {e₁ e₂ e₃ : SExpr} {u v : SLevel} (hΓ : ⊢ Γ)
     (h1 : Γ ⊢ e₁ ≡ e₂ : .sort u) (h2 : Γ ⊢ e₂ ≡ e₃ : .sort v) : u = v := by
-  have ⟨_, h_e2_u⟩ := h1.toHasTypeS
-  have ⟨h_e2_v, _⟩ := h2.toHasTypeS
-  obtain ⟨_, eq⟩ := h_e2_u.uniq h_e2_v
-  exact SExpr.sort_inv eq
+  have ⟨_, h_e2_u⟩ := h1.toHasTypeS hΓ
+  have ⟨h_e2_v, _⟩ := h2.toHasTypeS hΓ
+  obtain ⟨_, eq⟩ := h_e2_u.uniq hΓ h_e2_v
+  exact SExpr.sort_inv hΓ eq
 
 /-! ## `IsDefEq'`: defeq without heterogeneous `trans'`
 
@@ -241,27 +248,27 @@ theorem IsDefEq'.toIsDefEq {Γ : List SExpr} {e₁ e₂ A : SExpr}
 /-- Backward direction: every `IsDefEq` derivation translates to `IsDefEq'`.
 The `trans'` case uses `uniq_sort` to merge sort levels. -/
 theorem IsDefEq.toIsDefEq' {Γ : List SExpr} {e₁ e₂ A : SExpr}
-    (h : Γ ⊢ e₁ ≡ e₂ : A) : Γ ⊢' e₁ ≡ e₂ : A := by
+    (hΓ : ⊢ Γ) (h : Γ ⊢ e₁ ≡ e₂ : A) : Γ ⊢' e₁ ≡ e₂ : A := by
   induction h with
   | bvar h => exact .bvar h
-  | symm _ ih => exact .symm ih
-  | trans _ _ ih1 ih2 => exact .trans ih1 ih2
-  | trans' h1 h2 ih1 ih2 => cases h1.uniq_sort h2; exact .trans ih1 ih2
+  | symm _ ih => exact .symm (ih hΓ)
+  | trans _ _ ih1 ih2 => exact .trans (ih1 hΓ) (ih2 hΓ)
+  | trans' h1 h2 ih1 ih2 => cases h1.uniq_sort hΓ h2; exact .trans (ih1 hΓ) (ih2 hΓ)
   | sort => exact .sort
   | const h1 h2 => exact .const h1 h2
-  | appDF _ _ ih1 ih2 => exact .appDF ih1 ih2
-  | lamDF _ _ ih1 ih2 => exact .lamDF ih1 ih2
-  | forallEDF _ _ ih1 ih2 => exact .forallEDF ih1 ih2
-  | defeqDF _ _ ih1 ih2 => exact .defeqDF ih1 ih2
-  | beta _ _ ih1 ih2 => exact .beta ih1 ih2
-  | eta _ ih => exact .eta ih
-  | proofIrrel _ _ _ ih1 ih2 ih3 => exact .proofIrrel ih1 ih2 ih3
+  | appDF _ _ ih1 ih2 => exact .appDF (ih1 hΓ) (ih2 hΓ)
+  | lamDF h_A _ ih1 ih2 => exact .lamDF (ih1 hΓ) (ih2 (Ctx.WF.cons hΓ h_A.hasType.1))
+  | forallEDF h_A _ ih1 ih2 => exact .forallEDF (ih1 hΓ) (ih2 (Ctx.WF.cons hΓ h_A.hasType.1))
+  | defeqDF _ _ ih1 ih2 => exact .defeqDF (ih1 hΓ) (ih2 hΓ)
+  | beta _ h_e' ih1 ih2 => exact .beta (ih1 ⟨hΓ, h_e'.isType hΓ⟩) (ih2 hΓ)
+  | eta _ ih => exact .eta (ih hΓ)
+  | proofIrrel _ _ _ ih1 ih2 ih3 => exact .proofIrrel (ih1 hΓ) (ih2 hΓ) (ih3 hΓ)
   | extra h1 h2 => exact .extra h1 h2
 
-/-- `IsDefEq` and `IsDefEq'` are equivalent. -/
-theorem IsDefEq.iff_isDefEq' {Γ : List SExpr} {e₁ e₂ A : SExpr} :
+/-- `IsDefEq` and `IsDefEq'` are equivalent (in a well-formed context). -/
+theorem IsDefEq.iff_isDefEq' {Γ : List SExpr} {e₁ e₂ A : SExpr} (hΓ : ⊢ Γ) :
     Γ ⊢ e₁ ≡ e₂ : A ↔ Γ ⊢' e₁ ≡ e₂ : A :=
-  ⟨IsDefEq.toIsDefEq', IsDefEq'.toIsDefEq⟩
+  ⟨IsDefEq.toIsDefEq' hΓ, IsDefEq'.toIsDefEq⟩
 
 /-! ## Reflection to `VExpr`
 
@@ -275,17 +282,18 @@ pull the SExpr-side inversion theorems back to `VExpr`. Conclusions that are
 is not available. -/
 
 /-- A defeq whose left side is a sort can be retyped at the canonical sort. -/
-theorem IsDefEq.sort_retype (h : Γ ⊢ .sort u ≡ e : T) :
+theorem IsDefEq.sort_retype (hΓ : ⊢ Γ) (h : Γ ⊢ .sort u ≡ e : T) :
     Γ ⊢ .sort u ≡ e : .sort (.succ u) :=
-  have ⟨_, eq⟩ := h.toHasTypeS.1.uniq (.sort' (Γ := Γ))
+  have ⟨_, eq⟩ := (h.toHasTypeS hΓ).1.uniq hΓ (.sort' (Γ := Γ))
   eq.defeqDF h
 
 /-- A defeq whose left side is a Pi can be retyped at some sort. -/
-theorem IsDefEq.forallE_retype (h : Γ ⊢ .forallE A B ≡ e : T) :
+theorem IsDefEq.forallE_retype (hΓ : ⊢ Γ) (h : Γ ⊢ .forallE A B ≡ e : T) :
     ∃ s, Γ ⊢ .forallE A B ≡ e : .sort s := by
-  obtain ⟨_, h2, -⟩ := h.toHasTypeS.1.toStructural
-  have ⟨_, eq⟩ := h.toHasTypeS.1.uniq h2
+  obtain ⟨_, h2, -⟩ := (h.toHasTypeS hΓ).1.toStructural
+  have ⟨_, eq⟩ := (h.toHasTypeS hΓ).1.uniq hΓ h2
   cases h2; exact ⟨_, eq.defeqDF h⟩
+
 
 omit [Params] in
 theorem _root_.Lean4Lean.OnCtx.levelWF {env : VEnv} {Γ : List VExpr}
@@ -293,6 +301,11 @@ theorem _root_.Lean4Lean.OnCtx.levelWF {env : VEnv} {Γ : List VExpr}
   induction Γ with
   | nil => trivial
   | cons A Γ ih => have ⟨_, h⟩ := hΓ.2; exact ⟨ih hΓ.1, (h.levelWF (ih hΓ.1)).1⟩
+
+/-- The translation of a well-formed `VExpr` context is a well-formed `SExpr` context. -/
+theorem Ctx.WF.mkS : ∀ {Γ : List VExpr}, OnCtx Γ (Params.env.IsType Params.univs) → ⊢ Γ.map mk
+  | [], _ => trivial
+  | _ :: _, ⟨hΓ, _, hA⟩ => ⟨mkS hΓ, _, IsDefEq.mkS hA hΓ.levelWF⟩
 
 /-- `mk` is injective up to level equivalence on level-well-formed expressions. -/
 theorem _root_.Lean4Lean.VEnv.EqUpToLevels.of_mk_eq : ∀ {e e' : VExpr},
@@ -323,27 +336,30 @@ theorem _root_.Lean4Lean.VEnv.IsDefEq.of_mk_eq {Γ : List VExpr}
 
 /-- Sort injectivity for `VExpr`: defeq sorts have equivalent levels. -/
 theorem _root_.Lean4Lean.VEnv.IsDefEqU.sort_invS {Γ : List VExpr}
-    (hΓ : OnCtx Γ fun _ A => A.LevelWF Params.univs)
+    (hΓ : OnCtx Γ (Params.env.IsType Params.univs))
     (h : Params.env.IsDefEqU Params.univs Γ (.sort u) (.sort v)) : u ≈ v :=
   have ⟨_, h⟩ := h
-  SLevel.mk_inj (h.levelWF hΓ).1 (h.levelWF hΓ).2.1 (sort_inv (IsDefEq.mkS h hΓ))
+  have hΓ' := hΓ.levelWF
+  SLevel.mk_inj (h.levelWF hΓ').1 (h.levelWF hΓ').2.1 (sort_inv (Ctx.WF.mkS hΓ) (IsDefEq.mkS h hΓ'))
 
 /-- A sort is never defeq to a Pi type (`VExpr`). -/
 theorem _root_.Lean4Lean.VEnv.IsDefEqU.sort_forallE_invS {Γ : List VExpr}
-    (hΓ : OnCtx Γ fun _ A => A.LevelWF Params.univs)
+    (hΓ : OnCtx Γ (Params.env.IsType Params.univs))
     (h : Params.env.IsDefEqU Params.univs Γ (.sort u) (.forallE A B)) : False :=
   have ⟨_, h⟩ := h
-  sort_forallE_inv (IsDefEq.mkS h hΓ).sort_retype
+  have hΓs := Ctx.WF.mkS hΓ
+  sort_forallE_inv hΓs ((IsDefEq.mkS h hΓ.levelWF).sort_retype hΓs)
 
 /-- Pi injectivity for `VExpr`, with the conclusion on the `SExpr` side. -/
 theorem _root_.Lean4Lean.VEnv.IsDefEqU.forallE_invS {Γ : List VExpr}
-    (hΓ : OnCtx Γ fun _ A => A.LevelWF Params.univs)
+    (hΓ : OnCtx Γ (Params.env.IsType Params.univs))
     (h : Params.env.IsDefEqU Params.univs Γ (.forallE A B) (.forallE A' B')) :
     ∃ u v, IsDefEq (Γ.map mk) (mk A) (mk A') (.sort u) ∧
       IsDefEq (mk A :: Γ.map mk) (mk B) (mk B') (.sort v) :=
   have ⟨_, h⟩ := h
-  have ⟨_, h'⟩ := (IsDefEq.mkS h hΓ).forallE_retype
-  forallE_inv h'
+  have hΓs := Ctx.WF.mkS hΓ
+  have ⟨_, h'⟩ := (IsDefEq.mkS h hΓ.levelWF).forallE_retype hΓs
+  forallE_inv hΓs h'
 
 #print axioms IsDefEq.mkS
 #print axioms VEnv.EqUpToLevels.of_mk_eq
@@ -361,12 +377,12 @@ variable [Params]
 /-- **Unique typing** for the `trans'`-free system `IsDefEq'` (Lean's rules over `SExpr`),
 as a corollary of the `trans'` route: translate into the `trans'` system, apply
 `HasTypeS.uniq`, and translate back using the admissibility of `trans'`. -/
-theorem IsDefEq'.uniq {Γ : List SExpr} {e₁ e₂ e₃ A B : SExpr}
+theorem IsDefEq'.uniq {Γ : List SExpr} {e₁ e₂ e₃ A B : SExpr} (hΓ : ⊢ Γ)
     (h1 : IsDefEq' Γ e₁ e₂ A) (h2 : IsDefEq' Γ e₂ e₃ B) :
     ∃ u, IsDefEq' Γ A B (.sort u) :=
-  let ⟨_, hA⟩ := h1.toIsDefEq.toHasTypeS
-  let ⟨hB, _⟩ := h2.toIsDefEq.toHasTypeS
-  let ⟨u, h⟩ := hA.uniq hB
-  ⟨u, h.toIsDefEq'⟩
+  let ⟨_, hA⟩ := h1.toIsDefEq.toHasTypeS hΓ
+  let ⟨hB, _⟩ := h2.toIsDefEq.toHasTypeS hΓ
+  let ⟨u, h⟩ := hA.uniq hΓ hB
+  ⟨u, h.toIsDefEq' hΓ⟩
 
 end Lean4Lean.SExpr

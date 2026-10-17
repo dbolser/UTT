@@ -1065,7 +1065,6 @@ inductive IsDefEqStrong : List SExpr → SExpr → SExpr → SExpr → Prop wher
     Γ ⊢ .mkInst ls df.lhs ≡ .mkInst ls df.rhs : .mkInst ls df.type
 end
 
-theorem IsDefEq.strong : Γ ⊢ e1 ≡ e2 : A → IsDefEqStrong Γ e1 e2 A := sorry
 theorem IsDefEqStrong.defeq : IsDefEqStrong Γ e1 e2 A → Γ ⊢ e1 ≡ e2 : A := by
   intro h
   induction h with
@@ -1174,6 +1173,8 @@ def Ctx.WF : List SExpr → Prop
   | [] => True
   | A::Γ => WF Γ ∧ ∃ u, Γ ⊢ A : .sort u
 scoped notation:65 "⊢ " Γ:36 => Ctx.WF Γ
+
+theorem Ctx.WF.cons (hΓ : ⊢ Γ) (hA : Γ ⊢ A : .sort u) : ⊢ A :: Γ := ⟨hΓ, _, hA⟩
 
 variable (HasType : List SExpr → SExpr → SExpr → Prop)
 inductive Ctx.Subst (Γ : List SExpr) : SExpr.Subst → List SExpr → Prop where
@@ -1446,7 +1447,7 @@ theorem IsDefEqStrong.forallE_inv' (H : Γ ⊢ₛ e1 ≡ e2 : V)
 
 /-- `[bvar 5] ⊢ bvar 0 : bvar 6` holds weakly (ill-formed context), but no strong
 derivation can have the non-closed type `bvar 6` in a context of length 1: the
-well-formedness hypothesis of `IsDefEq.strongWF` cannot be dropped. -/
+well-formedness hypothesis of `IsDefEq.strong` cannot be dropped. -/
 theorem IsDefEq.strong_counterexample :
     ¬ ∀ {Γ e1 e2 A}, Γ ⊢ e1 ≡ e2 : A → IsDefEqStrong Γ e1 e2 A := fun h =>
   have := (h (IsDefEq.bvar (Γ := [.bvar 5]) .zero)).closedN
@@ -1932,11 +1933,11 @@ theorem CtorProvider.syn : CtorProvider := by
 theorem Params.envStrongS : EnvStrongS := .of_provider CtorProvider.syn
 
 /-- Every weak derivation in a well-formed context is strong. -/
-theorem IsDefEq.strongWF (hΓ : ⊢ Γ) (H : Γ ⊢ e1 ≡ e2 : A) : IsDefEqStrong Γ e1 e2 A :=
+theorem IsDefEq.strong (hΓ : ⊢ Γ) (H : Γ ⊢ e1 ≡ e2 : A) : IsDefEqStrong Γ e1 e2 A :=
   H.strongS Params.envStrongS (.of_wf Params.envStrongS hΓ)
 
 theorem IsDefEq.isType (hΓ : ⊢ Γ) (H : Γ ⊢ e1 ≡ e2 : A) : ∃ u, Γ ⊢ A : .sort u :=
-  let ⟨u, h⟩ := (H.strongWF hΓ).isType'; ⟨u, h.defeq⟩
+  let ⟨u, h⟩ := (H.strong hΓ).isType'; ⟨u, h.defeq⟩
 
 theorem IsDefEq.weak' (W : Ctx.Lift' ρ Γ Γ') (H : Γ ⊢ e1 ≡ e2 : A) :
     Γ' ⊢ e1.lift' ρ ≡ e2.lift' ρ : A.lift' ρ := by
@@ -1981,15 +1982,6 @@ theorem Ctx.SubstEq.left (W : Ctx.SubstEq Γ₀ σ σ' Γ) : Ctx.Subst (· ⊢ �
   | weak _ ih => exact ih.lift_r (fun W h => h.weak' W) .one
   | cons _ _ h ih => exact .cons ih h.hasType.1
 
-theorem IsDefEq.subst (W : Ctx.SubstEq Γ₀ σ σ' Γ) :
-    Γ ⊢ e1 ≡ e2 : A → Γ₀ ⊢ e1.subst σ ≡ e2.subst σ' : A.subst σ := sorry
-
-theorem Ctx.SubstEq.symm (W : Ctx.SubstEq Γ₀ σ σ' Γ) : Ctx.SubstEq Γ₀ σ' σ Γ := by
-  induction W with
-  | nil => exact .nil
-  | weak _ ih => exact .weak ih
-  | cons W hA h ih => exact .cons ih hA (.defeqDF (.subst W hA) h.symm)
-
 theorem Ctx.SubstEq.lookup (W : Ctx.SubstEq Γ₀ σ σ' Γ) :
     Lookup Γ i A → Γ₀ ⊢ σ i ≡ σ' i : A.subst σ := by
   induction W generalizing i A with
@@ -2017,8 +2009,8 @@ theorem Ctx.SubstEq.strong (W : Ctx.SubstEq Γ₀ σ σ' Γ)
   | nil => exact .id (.of_wf Params.envStrongS hΓ)
   | weak _ ih => exact .skip (ih hΓ hΓ₀.1)
   | cons _ hA hhead ih =>
-    exact .cons (ih hΓ.1 hΓ₀) (hA.strongWF hΓ.1)
-      (hhead.strongWF hΓ₀)
+    exact .cons (ih hΓ.1 hΓ₀) (hA.strong hΓ.1)
+      (hhead.strong hΓ₀)
 
 
 /-- With the identity-based `nil`, well-formedness of the target context gives that of the
@@ -2030,10 +2022,16 @@ theorem Ctx.SubstEq.wf (W : Ctx.SubstEq Γ₀ σ σ' Γ) (hΓ₀ : ⊢ Γ₀) : 
   | cons _ hA _ ih => exact ⟨ih hΓ₀, _, hA⟩
 
 /-- Simultaneous substitution of a defeq pair of substitutions into a defeq. -/
-theorem IsDefEq.substWF (hΓ₀ : ⊢ Γ₀)
+theorem IsDefEq.subst (hΓ₀ : ⊢ Γ₀)
     (W : Ctx.SubstEq Γ₀ σ σ' Γ) (H : Γ ⊢ e1 ≡ e2 : A) :
     Γ₀ ⊢ e1.subst σ ≡ e2.subst σ' : A.subst σ :=
-  ((H.strongWF (W.wf hΓ₀)).subst (W.strong (W.wf hΓ₀) hΓ₀)).defeq
+  ((H.strong (W.wf hΓ₀)).subst (W.strong (W.wf hΓ₀) hΓ₀)).defeq
+
+theorem Ctx.SubstEq.symm (W : Ctx.SubstEq Γ₀ σ σ' Γ) (hΓ₀ : ⊢ Γ₀) : Ctx.SubstEq Γ₀ σ' σ Γ := by
+  induction W with
+  | nil => exact .nil
+  | weak _ ih => exact .weak (ih hΓ₀.1)
+  | cons W hA h ih => exact .cons (ih hΓ₀) hA (.defeqDF (.subst hΓ₀ W hA) h.symm)
 
 
 /-! ### `defeqDF_l'` directly, with no hypotheses -/
