@@ -54,6 +54,26 @@ def zero : SLevel := ⟨_, .zero, ⟨⟩, rfl⟩
 
 def mk (l : VLevel) : SLevel := if h : l.WF univs then ⟨_, l, h, rfl⟩ else .zero
 
+theorem mk_of_wf (h : l.WF univs) : mk l = (⟨_, l, h, rfl⟩ : SLevel) := by
+  have hm : mk l = if h' : l.WF univs then
+      (⟨_, l, h', rfl⟩ : SLevel) else SLevel.zero := rfl
+  rw [hm]
+  exact dif_pos h
+
+theorem mk_eq (hl : l.WF univs) (hl' : l'.WF univs) (h : l ≈ l') : mk l = mk l' := by
+  rw [mk_of_wf hl, mk_of_wf hl']
+  apply Subtype.ext
+  exact VLevel.equiv_def'.1 h
+
+@[simp] theorem mk_zero : mk .zero = zero := by
+  apply Subtype.ext
+  rfl
+
+theorem mk_val (h : l.WF univs) : (mk l).1 = l.eval := by rw [mk_of_wf h]
+
+theorem mk_inj (hl : l.WF univs) (hl' : l'.WF univs) (h : mk l = mk l') : l ≈ l' :=
+  VLevel.equiv_def'.2 (by rw [← mk_val hl, ← mk_val hl', h])
+
 def succ (l : SLevel) : SLevel :=
   ⟨fun v => l.1 v + 1, let ⟨u, h1, h2⟩ := l.2; ⟨u.succ, h1, h2 ▸ rfl⟩⟩
 
@@ -64,6 +84,20 @@ def max (l₁ l₂ : SLevel) : SLevel :=
 def imax (l₁ l₂ : SLevel) : SLevel :=
   ⟨fun v => Lean.Nat.imax (l₁.1 v) (l₂.1 v),
     let ⟨u, h1, h2⟩ := l₁.2; let ⟨v, h3, h4⟩ := l₂.2; ⟨u.imax v, ⟨h1, h3⟩, h2 ▸ h4 ▸ rfl⟩⟩
+
+@[simp] theorem mk_succ (h : l.WF univs) : mk l.succ = succ (mk l) := by
+  have hs : l.succ.WF univs := h
+  rw [mk_of_wf hs, mk_of_wf h]; apply Subtype.ext; rfl
+
+@[simp] theorem mk_max (h1 : l₁.WF univs) (h2 : l₂.WF univs) :
+    mk (.max l₁ l₂) = max (mk l₁) (mk l₂) := by
+  rw [mk_of_wf (l := l₁.max l₂) ⟨h1, h2⟩, mk_of_wf h1, mk_of_wf h2]
+  apply Subtype.ext; rfl
+
+@[simp] theorem mk_imax (h1 : l₁.WF univs) (h2 : l₂.WF univs) :
+    mk (.imax l₁ l₂) = imax (mk l₁) (mk l₂) := by
+  rw [mk_of_wf (l := l₁.imax l₂) ⟨h1, h2⟩, mk_of_wf h1, mk_of_wf h2]
+  apply Subtype.ext; rfl
 
 def inst (ls : List SLevel) (l : SLevel) : SLevel := by
   refine ⟨fun v => l.1 (ls.map (·.1 v)), ?_⟩
@@ -81,6 +115,75 @@ def inst (ls : List SLevel) (l : SLevel) : SLevel := by
   · simp [VLevel.eval_inst, ← h2]; congr 1
     rw [← List.forall₂_eq, List.forall₂_map_left_iff, List.forall₂_map_right_iff]
     exact h3.imp fun _ _ h => congrFun h.2 _
+
+/-- Instantiate a syntactic level directly into semantic levels. Unlike `inst ls (mk l)`,
+this does not require `l` to be well-formed in the ambient universe context. -/
+def instV (ls : List SLevel) (l : VLevel) : SLevel := by
+  refine ⟨fun v => l.eval (ls.map (·.1 v)), ?_⟩
+  have ⟨ls', h⟩ :
+      ∃ ls' : List VLevel, ls'.Forall₂ (fun l' l => l'.WF univs ∧ l'.eval = l.1) ls := by
+    induction ls with
+    | nil => exact ⟨_, .nil⟩
+    | cons a ls ih =>
+      let ⟨l', h1, h2⟩ := a.2
+      let ⟨ls', ih⟩ := ih
+      exact ⟨l' :: ls', .cons ⟨h1, h2⟩ ih⟩
+  refine ⟨l.inst ls', VLevel.WF.inst fun _ hl => ?_, ?_⟩
+  · let ⟨_, hl⟩ := h.forall_exists_l _ hl; exact hl.2.1
+  · funext v
+    simp only [VLevel.eval_inst]
+    congr 1
+    rw [← List.forall₂_eq, List.forall₂_map_left_iff, List.forall₂_map_right_iff]
+    exact h.imp fun _ _ hl => congrFun hl.2 _
+
+theorem instV_map_mk (hls : ∀ u ∈ ls, u.WF univs) :
+    instV (ls.map mk) l = mk (l.inst ls) := by
+  apply Subtype.ext
+  funext ns
+  rw [congrFun (mk_val (VLevel.WF.inst hls)) ns]
+  simp only [VLevel.eval_inst]
+  change l.eval ((ls.map mk).map fun u => u.1 ns) = l.eval (ls.map (VLevel.eval ns))
+  congr 1
+  simp only [List.map_map]
+  apply List.map_congr_left
+  intro u hu
+  exact congrFun (mk_val (hls u hu)) ns
+
+theorem mk_inst (hl : l.WF univs) (hls : ∀ u ∈ ls, u.WF univs) :
+    mk (l.inst ls) = inst (ls.map mk) (mk l) := by
+  apply Subtype.ext
+  funext ns
+  rw [congrFun (mk_val (VLevel.WF.inst hls)) ns]
+  simp only [VLevel.eval_inst]
+  change l.eval (ls.map (VLevel.eval ns)) = (mk l).1 ((ls.map mk).map fun u => u.1 ns)
+  rw [congrFun (mk_val hl) _]
+  congr 1
+  simp only [List.map_map]
+  apply List.map_congr_left
+  intro u hu
+  exact (congrFun (mk_val (hls u hu)) ns).symm
+
+theorem map_mk_eq (hls : ∀ l ∈ ls, l.WF univs) (hls' : ∀ l ∈ ls', l.WF univs)
+    (h : List.Forall₂ (fun l l' => l ≈ l') ls ls') :
+    ls.map mk = ls'.map mk := by
+  induction h with
+  | nil => rfl
+  | cons h _ ih =>
+    simp only [List.map_cons]
+    rw [mk_eq (hls _ (by simp)) (hls' _ (by simp)) h,
+      ih (fun _ hu => hls _ (by simp [hu])) (fun _ hu => hls' _ (by simp [hu]))]
+
+theorem map_mk_inj (hls : ∀ l ∈ ls, l.WF univs) (hls' : ∀ l ∈ ls', l.WF univs)
+    (h : ls.map mk = ls'.map mk) : List.Forall₂ (· ≈ ·) ls ls' := by
+  induction ls generalizing ls' with
+  | nil => cases ls' with | nil => exact .nil | cons => cases h
+  | cons l ls ih =>
+    cases ls' with
+    | nil => cases h
+    | cons l' ls' =>
+      simp only [List.map_cons, List.cons.injEq] at h
+      exact .cons (mk_inj (hls _ (by simp)) (hls' _ (by simp)) h.1)
+        (ih (fun _ hu => hls _ (by simp [hu])) (fun _ hu => hls' _ (by simp [hu])) h.2)
 
 end SLevel
 
@@ -156,6 +259,66 @@ def mk : VExpr → SExpr
   | .app fn arg => .app (.mk fn) (.mk arg)
   | .lam ty body => .lam (.mk ty) (.mk body)
   | .forallE ty body => .forallE (.mk ty) (.mk body)
+
+/-- Translate an expression while instantiating its universe parameters. -/
+def mkInst (ls : List SLevel) : VExpr → SExpr
+  | .bvar i => .bvar i
+  | .sort u => .sort (.instV ls u)
+  | .const c us => .const c (us.map (.instV ls))
+  | .app fn arg => .app (mkInst ls fn) (mkInst ls arg)
+  | .lam ty body => .lam (mkInst ls ty) (mkInst ls body)
+  | .forallE ty body => .forallE (mkInst ls ty) (mkInst ls body)
+
+@[simp] theorem mkInst_lift' : mkInst ls (e.lift' ρ) = (mkInst ls e).lift' ρ := by
+  induction e generalizing ρ <;> simp [VExpr.lift', mkInst, *]
+
+theorem _root_.Lean4Lean.VExpr.ClosedN.mkInstS : ∀ {e : VExpr},
+    e.ClosedN k → (mkInst ls e).ClosedN k
+  | .bvar .., h | .sort .., h | .const .., h => h
+  | .app .., h | .lam .., h | .forallE .., h => ⟨h.1.mkInstS, h.2.mkInstS⟩
+
+theorem mkInst_map_mk (hls : ∀ u ∈ ls, u.WF univs) :
+    mkInst (ls.map SLevel.mk) e = mk (e.instL ls) := by
+  induction e with
+  | bvar => rfl
+  | sort u => exact congrArg SExpr.sort (SLevel.instV_map_mk hls)
+  | const c us =>
+    simp only [mkInst, VExpr.instL, mk, List.map_map]
+    congr 1
+    apply List.map_congr_left
+    intro u hu
+    exact SLevel.instV_map_mk hls
+  | app f a ihf iha | lam f a ihf iha | forallE f a ihf iha =>
+    simp only [mkInst, VExpr.instL, mk]
+    rw [ihf, iha]
+
+@[simp] theorem mk_lift' : ∀ {e : VExpr}, mk (e.lift' ρ) = (mk e).lift' ρ
+  | .bvar .. | .sort .. | .const .. => rfl
+  | .app .. | .lam .. | .forallE .. => by simp [VExpr.lift', mk, mk_lift']
+
+@[simp] theorem mk_lift {e : VExpr} : mk e.lift = (mk e).lift := by
+  rw [VExpr.lift_eq_lift']
+  exact mk_lift'
+
+theorem mk_instL {e : VExpr} {ls : List VLevel}
+    (he : e.LevelWF univs) (hls : ∀ u ∈ ls, u.WF univs) :
+    mk (e.instL ls) = (mk e).instL (ls.map SLevel.mk) := by
+  induction e with
+  | bvar => rfl
+  | app f a ihf iha | lam f a ihf iha | forallE f a ihf iha =>
+    simp [VExpr.LevelWF] at he
+    simp only [VExpr.instL, SExpr.mk, SExpr.instL]
+    rw [ihf he.1, iha he.2]
+  | sort u =>
+    simp only [VExpr.instL, SExpr.mk, SExpr.instL]
+    exact congrArg SExpr.sort (SLevel.mk_inst he hls)
+  | const c us =>
+    simp [VExpr.LevelWF] at he
+    simp only [VExpr.instL, mk, instL, List.map_map]
+    congr 1
+    apply List.map_congr_left
+    intro u hu
+    exact SLevel.mk_inst (he u hu) hls
 
 theorem _root_.Lean4Lean.VExpr.ClosedN.mkS : ∀ {e : VExpr}, e.ClosedN k → ClosedN (.mk e) k
   | .bvar .., h | .sort .., h | .const .., h => h
@@ -256,6 +419,22 @@ def subst : SExpr → Subst → SExpr
   | .lam ty body, σ => .lam (ty.subst σ) (body.subst σ.lift)
   | .forallE ty body, σ => .forallE (ty.subst σ) (body.subst σ.lift)
 
+def mkSubst (σ : VExpr.Subst) : Subst := fun i => mk (σ i)
+
+@[simp] theorem mkSubst_lift : mkSubst σ.lift = (mkSubst σ).lift := by
+  funext i
+  cases i with
+  | zero => rfl
+  | succ i => exact mk_lift
+
+@[simp] theorem mk_subst : mk (e.subst σ) = (mk e).subst (mkSubst σ) := by
+  induction e generalizing σ with
+  | bvar => rfl
+  | sort | const => rfl
+  | app f a ihf iha => simp only [VExpr.subst, mk, subst, ihf, iha]
+  | lam A e ihA ihe | forallE A e ihA ihe =>
+    simp only [VExpr.subst, mk, subst, ihA, ihe, mkSubst_lift]
+
 @[simp] theorem id_lift : Subst.id.lift = Subst.id := by funext i; cases i <;> rfl
 
 @[simp] theorem subst_id {e : SExpr} : e.subst .id = e := by
@@ -324,6 +503,13 @@ theorem ClosedN.subst_eq {e : SExpr} (self : ClosedN e k) (h : σ.Fixes k) : e.s
   | lam _ _ ih1 ih2 | forallE _ _ ih1 ih2 => exact ⟨ih1 self.1 h, ih2 self.2 h.lift⟩
 
 def inst (e a : SExpr) : SExpr := e.subst (.one a)
+
+@[simp] theorem mkSubst_one : mkSubst (VExpr.Subst.one a) = Subst.one (mk a) := by
+  funext i
+  cases i <;> rfl
+
+@[simp] theorem mk_instExpr : mk (e.inst a) = (mk e).inst (mk a) := by
+  rw [VExpr.inst_eq, inst, mk_subst, mkSubst_one]
 
 def Skips (e : SExpr) (ρ : Lift) : Prop := lift' (e.subst ρ.invS) ρ = e
 
@@ -516,7 +702,7 @@ inductive _root_.Lean4Lean.Pattern.MatchesS :
 
 def _root_.Lean4Lean.Pattern.RHS.applyS {p : Pattern}
     (m1 : List SLevel) (m2 : p.Path → SExpr) : p.RHS → SExpr
-  | .fixed c _ => .instL m1 (.mk c)
+  | .fixed c _ => .mkInst m1 c
   | .var path => m2 path
   | .app f a => .app (f.applyS m1 m2) (a.applyS m1 m2)
 
@@ -527,7 +713,7 @@ def _root_.Lean4Lean.Pattern.RHS.Closed {p : Pattern} : p.RHS → Prop
 
 theorem _root_.Lean4Lean.Pattern.RHS.Closed.applyS {p : Pattern} {m1 m2} :
     ∀ r : p.RHS, r.Closed → (∀ a, (m2 a).ClosedN k) → (r.applyS m1 m2).ClosedN k
-  | .fixed .., h1, _ => h1.mkS.instL.mono (Nat.zero_le _)
+  | .fixed .., h1, _ => h1.mkInstS.mono (Nat.zero_le _)
   | .var _, _, h2 => h2 _
   | .app .., h1, h2 => ⟨h1.1.applyS _ h2, h1.2.applyS _ h2⟩
 
@@ -542,6 +728,11 @@ set_option hygiene false
 inductive Lookup : List SExpr → Nat → SExpr → Prop where
   | zero : Lookup (ty::Γ) 0 ty.lift
   | succ : Lookup Γ n ty → Lookup (A::Γ) (n+1) ty.lift
+
+theorem Lookup.mkS (H : Lean4Lean.Lookup Γ i A) : Lookup (Γ.map mk) i (mk A) := by
+  induction H with
+  | zero => rw [mk_lift]; exact .zero
+  | succ _ ih => rw [mk_lift]; exact .succ ih
 
 theorem Lookup.weak' (W : Ctx.Lift' ρ Γ Γ') (H : Lookup Γ i A) :
     Lookup Γ' (ρ.liftVar i) (A.lift' ρ) := by
@@ -595,7 +786,7 @@ inductive IsDefEq : List SExpr → SExpr → SExpr → SExpr → Prop where
   | trans' : Γ ⊢ A ≡ B : .sort u → Γ ⊢ B ≡ C : .sort v → Γ ⊢ A ≡ C : .sort u
   | sort : Γ ⊢ .sort l : .sort (.succ l)
   | const : env.constants c = some ci → ls.length = ci.uvars →
-    Γ ⊢ .const c ls : (SExpr.mk ci.type).instL ls
+    Γ ⊢ .const c ls : SExpr.mkInst ls ci.type
   | appDF : Γ ⊢ f ≡ f' : .forallE A B → Γ ⊢ a ≡ a' : A →
     Γ ⊢ .app f a ≡ .app f' a' : B.inst a
   | lamDF : Γ ⊢ A ≡ A' : .sort u → A::Γ ⊢ body ≡ body' : B →
@@ -609,13 +800,52 @@ inductive IsDefEq : List SExpr → SExpr → SExpr → SExpr → Prop where
   -- | extra : Pat p r → p.MatchesS e m1 m2 → (dfs : List _).map (·.2) = r.2.defeqsS m1 m2 →
   --   (∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) → Γ ⊢ e ≡ r.1.applyS m1 m2' : A
   | extra : env.defeqs df → ls.length = df.uvars →
-    Γ ⊢ .instL ls (.mk df.lhs) ≡ .instL ls (.mk df.rhs) : .instL ls (.mk df.type)
+    Γ ⊢ .mkInst ls df.lhs ≡ .mkInst ls df.rhs : .mkInst ls df.type
+
+/-- Translate the main typing judgment into the semantically quotiented syntax. -/
+theorem IsDefEq.mkS (H : Params.env.IsDefEq Params.univs Γ e₁ e₂ A) :
+    OnCtx Γ (fun _ A => A.LevelWF Params.univs) →
+    IsDefEq (Γ.map mk) (mk e₁) (mk e₂) (mk A) := by
+  intro hΓ
+  induction H with
+  | bvar h => exact .bvar (SExpr.Lookup.mkS h)
+  | symm _ ih => exact .symm (ih hΓ)
+  | trans _ _ ih₁ ih₂ => exact .trans (ih₁ hΓ) (ih₂ hΓ)
+  | @sortDF l l' Γ hl hl' h =>
+    change IsDefEq _ (.sort (SLevel.mk _)) (.sort (SLevel.mk _)) (.sort (SLevel.mk _))
+    have hu := SLevel.mk_eq hl hl' h
+    have hus : SLevel.mk l.succ = (SLevel.mk l').succ := by rw [SLevel.mk_succ hl, hu]
+    rw [hu, hus]
+    exact .sort
+  | @constDF c ci ls ls' Γ h₁ h₂ h₃ h₄ h₅ =>
+    change IsDefEq _ (.const c (ls.map SLevel.mk)) (.const c (ls'.map SLevel.mk))
+      (mk (ci.type.instL ls))
+    rw [← SLevel.map_mk_eq h₂ h₃ h₅, ← mkInst_map_mk h₂]
+    exact IsDefEq.const (ls := ls.map SLevel.mk) h₁ (by simpa using h₄)
+  | appDF _ _ ihf iha => simpa only [mk, mk_instExpr] using IsDefEq.appDF (ihf hΓ) (iha hΓ)
+  | lamDF hA _ ihA ihb =>
+    have hAwf := (hA.levelWF hΓ).1
+    exact .lamDF (ihA hΓ) (ihb ⟨hΓ, hAwf⟩)
+  | forallEDF hA hb ihA ihb =>
+    have hAwf := (hA.levelWF hΓ).1
+    have hu := (hA.levelWF hΓ).2.2
+    have hv := (hb.levelWF ⟨hΓ, hAwf⟩).2.2
+    simpa only [mk, SLevel.mk_imax hu hv] using IsDefEq.forallEDF (ihA hΓ) (ihb ⟨hΓ, hAwf⟩)
+  | defeqDF _ _ ihA ihe => exact .defeqDF (ihA hΓ) (ihe hΓ)
+  | beta _ he' ihe ihe' =>
+    have hAwf := (he'.levelWF hΓ).2.2
+    simpa only [mk, mk_instExpr] using IsDefEq.beta (ihe ⟨hΓ, hAwf⟩) (ihe' hΓ)
+  | eta _ ih => simpa only [mk, mk_lift] using IsDefEq.eta (ih hΓ)
+  | proofIrrel _ _ _ ihp ihh ihh' => exact .proofIrrel (ihp hΓ) (ihh hΓ) (ihh' hΓ)
+  | @extra df ls Γ h₁ h₂ h₃ =>
+    simpa only [mkInst_map_mk h₂] using
+      (IsDefEq.extra (Γ := Γ.map mk) (ls := ls.map SLevel.mk) h₁ (by simpa using h₃))
 
 axiom Params.extra_pat (Γ) : env.defeqs df → ls.length = df.uvars →
-  ∃ p r m1 m2 dfs, Pat p r ∧ p.MatchesS (.instL ls (.mk df.lhs)) m1 m2 ∧
+  ∃ p r m1 m2 dfs, Pat p r ∧ p.MatchesS (.mkInst ls df.lhs) m1 m2 ∧
     (dfs : List _).map (·.2) = r.2.defeqsS m1 m2 ∧
     (∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) ∧
-    .instL ls (.mk df.rhs) = r.1.applyS m1 m2
+    .mkInst ls df.rhs = r.1.applyS m1 m2
 
 def CtorBundle.IsCtor (c : Name) : Prop :=
   ∃ cl, Params.classify c = some cl ∧ cl matches .ctor .. | .etaCtor ..
@@ -649,10 +879,10 @@ inductive IsDefEqStrong : List SExpr → SExpr → SExpr → SExpr → Prop wher
   | trans' : Γ ⊢ A ≡ B : .sort u → Γ ⊢ B ≡ C : .sort v → Γ ⊢ A ≡ C : .sort u
   | sort : Γ ⊢ .sort l : .sort (.succ l)
   | const : env.constants c = some ci → ls.length = ci.uvars →
-    Γ ⊢ (SExpr.mk ci.type).instL ls : .sort u →
+    Γ ⊢ SExpr.mkInst ls ci.type : .sort u →
     (F : ∀ cl, CtorBundle c cl) →
-    (∀ cl, Γ ⊢ (SExpr.mk ci.type).instL ls ≡ (F cl).rhs ls : .sort (F cl).u) →
-    Γ ⊢ .const c ls : (SExpr.mk ci.type).instL ls
+    (∀ cl, Γ ⊢ SExpr.mkInst ls ci.type ≡ (F cl).rhs ls : .sort (F cl).u) →
+    Γ ⊢ .const c ls : SExpr.mkInst ls ci.type
   | appDF : Γ ⊢ A : .sort u →
     Γ ⊢ f ≡ f' : .forallE A B → Γ ⊢ a ≡ a' : A →
     Γ ⊢ B.inst a ≡ B.inst a' : .sort v →
@@ -671,9 +901,9 @@ inductive IsDefEqStrong : List SExpr → SExpr → SExpr → SExpr → Prop wher
     Γ ⊢ .lam A (.app e.lift (.bvar 0)) ≡ e : .forallE A B
   | proofIrrel : Γ ⊢ p : .sort .zero → Γ ⊢ h : p → Γ ⊢ h' : p → Γ ⊢ h ≡ h' : p
   | extra : env.defeqs df → ls.length = df.uvars →
-    Γ ⊢ .instL ls (.mk df.lhs) : .instL ls (.mk df.type) →
-    Γ ⊢ .instL ls (.mk df.rhs) : .instL ls (.mk df.type) →
-    Γ ⊢ .instL ls (.mk df.lhs) ≡ .instL ls (.mk df.rhs) : .instL ls (.mk df.type)
+    Γ ⊢ .mkInst ls df.lhs : .mkInst ls df.type →
+    Γ ⊢ .mkInst ls df.rhs : .mkInst ls df.type →
+    Γ ⊢ .mkInst ls df.lhs ≡ .mkInst ls df.rhs : .mkInst ls df.type
 end
 
 theorem IsDefEq.strong : Γ ⊢ e1 ≡ e2 : A → IsDefEqStrong Γ e1 e2 A := sorry
@@ -700,7 +930,7 @@ theorem _root_.Lean4Lean.Params.ctor_ty
     (hci : env.constants c = some ci) (h_len : ls.length = ci.uvars) :
     ∃ (I : Name) (Ts args : List SExpr) (u : SLevel),
       Ts.length = cl.arity ∧ Params.classify I = some (.indTy args.length) ∧ u ≠ .zero ∧
-      Γ ⊢ (SExpr.mk ci.type).instL ls ≡
+      Γ ⊢ SExpr.mkInst ls ci.type ≡
         Ts.foldr .forallE (args.foldr (fun A acc => acc.app A) (.const I ls)) : .sort u := sorry
 
 theorem IsDefEq.hasType (H : Γ ⊢ e1 ≡ e2 : A) :
@@ -719,8 +949,8 @@ inductive HasTypeStratifiedS : List SExpr → SExpr → SExpr → Bool → Nat �
   | const :
     env.constants c = some ci →
     ls.length = ci.uvars →
-    Γ ⊢ (mk ci.type).instL ls : .sort u !! n →
-    Γ ⊢ .const c ls :! (mk ci.type).instL ls !! n+1
+    Γ ⊢ mkInst ls ci.type : .sort u !! n →
+    Γ ⊢ .const c ls :! mkInst ls ci.type !! n+1
   | app :
     Γ ⊢ A : .sort u !! n →
     A::Γ ⊢ B : .sort v !! n →
@@ -819,7 +1049,7 @@ theorem IsDefEq.weak' (W : Ctx.Lift' ρ Γ Γ') (H : Γ ⊢ e1 ≡ e2 : A) :
   | trans _ _ ih1 ih2 => exact .trans (ih1 W) (ih2 W)
   | trans' _ _ ih1 ih2 => exact .trans' (ih1 W) (ih2 W)
   | sort => exact .sort
-  | const h1 h2 => rw [(henv.closedC h1).mkS.instL.lift'_eq .zero]; exact .const h1 h2
+  | const h1 h2 => rw [(henv.closedC h1).mkInstS.lift'_eq .zero]; exact .const h1 h2
   | appDF _ _ ih1 ih2 => exact SExpr.lift'_inst_hi .. ▸ .appDF (ih1 W) (ih2 W)
   | lamDF _ _ ih1 ih2 => exact .lamDF (ih1 W) (ih2 W.cons)
   | forallEDF _ _ ih1 ih2 => exact .forallEDF (ih1 W) (ih2 W.cons)
@@ -831,7 +1061,7 @@ theorem IsDefEq.weak' (W : Ctx.Lift' ρ Γ Γ') (H : Γ ⊢ e1 ≡ e2 : A) :
   | proofIrrel _ _ _ ih1 ih2 ih3 => exact .proofIrrel (ih1 W) (ih2 W) (ih3 W)
   | extra h1 h2 =>
     have ⟨⟨hA1, _⟩, hA2, hA3⟩ := henv.closed.2 h1
-    rw [hA1.mkS.instL.lift'_eq .zero, hA2.mkS.instL.lift'_eq .zero, hA3.mkS.instL.lift'_eq .zero]
+    rw [hA1.mkInstS.lift'_eq .zero, hA2.mkInstS.lift'_eq .zero, hA3.mkInstS.lift'_eq .zero]
     exact .extra h1 h2
 
 /--
@@ -1220,7 +1450,7 @@ inductive InferType : List SExpr → SExpr → SExpr → Prop where
   | bvar : Lookup Γ i A → Γ ⊢ .bvar i ▷ A
   | sort : Γ ⊢ .sort u ▷ .sort (.succ u)
   | const : env.constants c = some ci → ls.length = ci.uvars →
-    Γ ⊢ .const c ls ▷ (SExpr.mk ci.type).instL ls
+    Γ ⊢ .const c ls ▷ SExpr.mkInst ls ci.type
   | app : Γ ⊢ f ▷ F → Γ ⊢ F ⤳* .forallE A B → Γ ⊢ a :↑ A → Γ ⊢ .app f a ▷ B.inst a
   | lam : Γ ⊢ A :↑ .sort u → A::Γ ⊢ body ▷ B → Γ ⊢ .lam A body ▷ .forallE A B
   | forallE : Γ ⊢ A ▷ U → Γ ⊢ U ⤳* .sort u →
@@ -1244,7 +1474,7 @@ theorem InferType.determ (H1 : Γ ⊢ e ▷ A) (H2 : Γ ⊢ e ▷ A') : A = A' :
 theorem InferType.weak' (W : Ctx.Lift' ρ Γ Δ) : Γ ⊢ e ▷ A → Δ ⊢ e.lift' ρ ▷ A.lift' ρ
   | .bvar h => .bvar (h.weak' W)
   | .sort => .sort
-  | .const h1 h2 => by rw [(henv.closedC h1).mkS.instL.lift'_eq .zero]; exact .const h1 h2
+  | .const h1 h2 => by rw [(henv.closedC h1).mkInstS.lift'_eq .zero]; exact .const h1 h2
   | .app h1 h2 h3 => SExpr.lift'_inst_hi .. ▸ .app (h1.weak' W) (h2.weak' W) (h3.weak' W)
   | .lam h1 h2 => .lam (h1.weak' W) (h2.weak' W.cons)
   | .forallE h1 h2 h3 h4 => .forallE (h1.weak' W) (h2.weak' W) (h3.weak' W.cons) (h4.weak' W.cons)
@@ -1257,7 +1487,7 @@ theorem InferType.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e.lift' ρ ▷ 
   | sort => let .sort _ := e; cases he; exact ⟨_, rfl, .sort⟩
   | const h1 h2 =>
     let .const .. := e; cases he
-    exact ⟨_, ((henv.closedC h1).mkS.instL.lift'_eq .zero).symm, .const h1 h2⟩
+    exact ⟨_, ((henv.closedC h1).mkInstS.lift'_eq .zero).symm, .const h1 h2⟩
   | app h1 h2 h3 ih =>
     let .app .. := e; cases he
     obtain ⟨_, rfl, a1⟩ := ih W rfl
@@ -1289,7 +1519,7 @@ theorem InferType.subst (W : Ctx.Subst InferType Δ σ Γ)
     case succ i C h => rw [SExpr.lift, SExpr.subst_lift']; exact ih h
   | sort => exact .sort
   | const h1 h2 =>
-    rw [(henv.closedC h1).mkS.instL.subst_eq .zero]
+    rw [(henv.closedC h1).mkInstS.subst_eq .zero]
     exact .const h1 h2
   | app h1 h2 h3 ih => exact subst_inst ▸ .app (ih W) (h2.subst W) (h3.subst W)
   | lam h1 h2 ih => exact .lam (h1.subst W) (ih (W.lift .bvar fun W h => h.weak' W))
