@@ -20,17 +20,20 @@ Run `lake env lean scripts/TraceSorry.lean`. Today it reports, for `IsDefEq'.uni
 
 | gap | file | kind |
 |---|---|---|
-| `Params.extra_pat` | SExpr.lean | axiom; should become a `Params` field (environment assumption) |
-| `IsDefEq.strong` | SExpr.lean | sorry; port of `Theory/Typing/Strong.lean` to SExpr |
-| `IsDefEq.subst` | SExpr.lean | sorry; follows from `strong` |
-| `IsDefEq.defeqDF_l'` | SExpr.lean | sorry; follows from `subst` |
+| `IsDefEq.strong` | SExpr.lean | sorry; port of `Theory/Typing/Strong.lean` to SExpr. **False as stated**: needs a well-formed-context hypothesis (proof in scratch, being integrated) |
+| `IsDefEq.subst` | SExpr.lean | sorry; follows from `strong` (same hypothesis) |
+| `IsDefEq.defeqDF_l'` | SExpr.lean | sorry; proven in scratch as stated |
 | `LR.adequacy`, `const` case | ShapeLogRelAdequacy.lean | **the real gap**: the logical relation records nothing about terms at inductive types, so rewrite rules cannot fire inside it, and the rule's right-hand side has no induction hypothesis |
 
-Hidden behind `strong`: `Params.ctor_ty` (sorry) and typing of environment
-constants in `SExpr`, both to become `Params` fields.
+No custom axioms remain: `Params.extra_pat` and `Params.ctor_ty` are now
+theorems derived from VExpr-level `Params` fields (`extra_patV`, `ctor_tyV`),
+and typing of environment constants in `SExpr` (`Params.const_wf`,
+`Params.defeq_wf`) is derived from `henv` through the translation.
 
-After that: translate `VEnv.IsDefEq` into `SExpr.IsDefEq` (cf. closed upstream
-PR #37) and reflect the result back to `Theory/Typing/Injectivity.lean`.
+Bridge: `SExpr.IsDefEq.mkS` translates `VEnv.IsDefEq` into `SExpr.IsDefEq`
+(port of closed upstream PR #37, with the `mkInst` fix). VExpr-level sort
+injectivity and sort/Pi disjointness are reflected back (`sort_invS`,
+`sort_forallE_invS`); Pi injectivity reflects only to an SExpr statement so far.
 
 ## Done on this branch
 
@@ -39,3 +42,5 @@ PR #37) and reflect the result back to `Theory/Typing/Injectivity.lean`.
   The old `lift` statement was unprovable.
 - `IsDefEq'.uniq` stated and derived.
 - `WHRed.determ` proven (pattern determinism; only `pat_simple`/`pat_uniq` needed).
+- Bridge `IsDefEq.mkS` and VExpr corollaries (branch `bridge`, merged).
+- Axiom `extra_pat` and sorry `ctor_ty` replaced by `Params` fields + theorems (branch `params`, merged).
