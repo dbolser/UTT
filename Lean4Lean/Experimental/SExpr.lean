@@ -2217,41 +2217,6 @@ theorem IsDefEq.defeqDFC' (h1 : IsDefEqCtx Γ₀ Γ₁ Γ₂)
 theorem IsDefEq.defeqDFC (h1 : IsDefEqCtx Γ₀ Γ₁ Γ₂)
     (h2 : Γ₁ ⊢ e₁ ≡ e₂ : A) : Γ₂ ⊢ e₁ ≡ e₂ : A := .defeqDFC' (Δ := []) h1 h2
 
-scoped notation:65 Γ " ⊢ " e1 " ⤳ " e2:36 => WHRed Γ e1 e2
-inductive WHRed (Γ : List SExpr) : SExpr → SExpr → Prop where
-  | app : Γ ⊢ f ⤳ f' → Γ ⊢ .app f a ⤳ .app f' a
-  | beta : Γ ⊢ .app (.lam A e) a ⤳ e.inst a
-  | extra : Pat p r → p.MatchesS e m1 m2 → (dfs : List _).map (·.2) = r.2.defeqsS m1 m2 →
-    (∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) → Γ ⊢ e ⤳ r.1.applyS m1 m2
-
-theorem WHRed.subst (W : Ctx.Subst HasType Δ σ Γ) :
-    Γ ⊢ e1 ⤳ e2 → Δ ⊢ e1.subst σ ⤳ e2.subst σ
-  | .app h1 => .app (h1.subst W)
-  | .beta => subst_inst ▸ .beta
-  | .extra h1 h2 h3 h4 => sorry
-
-theorem WHRed.weak' (W : Ctx.Lift' ρ Γ Γ') :
-    Γ ⊢ e1 ⤳ e2 → Γ' ⊢ e1.lift' ρ ⤳ e2.lift' ρ
-  | .app h1 => .app (h1.weak' W)
-  | .beta => by rw [SExpr.lift'_inst_hi]; exact .beta
-  | .extra h1 h2 h3 h4 => sorry
-
-theorem WHRed.weakU_inv (W : Ctx.Lift' ρ Γ Γ') (H : Γ' ⊢ e1.lift' ρ ⤳ e2') :
-    ∃ e2, e2' = e2.lift' ρ ∧ Γ ⊢ e1 ⤳ e2 := by
-  generalize he : e1.lift' ρ = e1' at H
-  induction H generalizing e1 with
-  | app h1 ih => let .app .. := e1; cases he; obtain ⟨_, rfl, a1⟩ := ih rfl; exact ⟨_, rfl, .app a1⟩
-  | beta =>
-    let .app e1 _ := e1; let .lam .. := e1; cases he
-    simp [← SExpr.lift'_inst_hi, SExpr.lift'_inj]; exact .beta
-  | extra => sorry
-
-def WHNF (Γ : List SExpr) (e : SExpr) := ∀ e', ¬Γ ⊢ e ⤳ e'
-
-theorem WHNF.lam : WHNF Γ (.lam A e) := nofun
-theorem WHNF.sort : WHNF Γ (.sort A) := nofun
-theorem WHNF.forallE : WHNF Γ (.forallE A B) := nofun
-
 omit [Params] in
 theorem _root_.Lean4Lean.Subpattern.varN_const (H : Subpattern p (.varN (.const c) n)) :
     ∃ n, p = .varN (.const c) n := by
@@ -2293,6 +2258,211 @@ omit [Params] in
 theorem _root_.Lean4Lean.Pattern.ne_app_self {f a : Pattern} : f ≠ .app f a := by
   intro h; have := congrArg sizeOf h; simp at this; omega
 
+omit [Params] in
+theorem _root_.Lean4Lean.Pattern.ne_app_self_r {f a : Pattern} : a ≠ .app f a := by
+  intro h; have := congrArg sizeOf h; simp at this
+
+/-- In a simple pattern the only `app` subpattern is the pattern itself. -/
+theorem Params.simple_app (H : Pat p r) (h : Subpattern (.app p₁ p₂) p) : .app p₁ p₂ = p := by
+  obtain ⟨_|_, rfl⟩ := pat_simple H <;> cases h
+  · rfl
+  · obtain ⟨n, h⟩ := Subpattern.varN_const ‹_›; cases n <;> cases h
+  · obtain ⟨n, h⟩ := Subpattern.varN_const ‹_›; cases n <;> cases h
+
+theorem _root_.Lean4Lean.Pattern.matchesS_lift' {p : Pattern} {e : SExpr} {m1 m2'} :
+    p.MatchesS (e.lift' ρ) m1 m2' ↔
+    ∃ m2, p.MatchesS e m1 m2 ∧ ∀ x, m2' x = (m2 x).lift' ρ := by
+  constructor
+  · intro h; generalize eq : e.lift' ρ = e' at h
+    induction h generalizing e with
+    | const => cases e <;> cases eq; exact ⟨_, .const, nofun⟩
+    | var _ ih =>
+      cases e <;> cases eq
+      have ⟨_, l1, l2⟩ := ih rfl
+      refine ⟨_, .var l1, ?_⟩
+      rintro (_|_) <;> solve_by_elim
+    | app _ _ ih1 ih2 =>
+      cases e <;> cases eq
+      have ⟨_, l1, l2⟩ := ih1 rfl
+      have ⟨_, r1, r2⟩ := ih2 rfl
+      refine ⟨_, .app l1 r1, ?_⟩
+      rintro (_|_) <;> solve_by_elim
+  · intro ⟨m2, h1, h2⟩
+    induction h1 with
+    | const => exact Pattern.MatchesS.congr .const nofun
+    | var _ ih =>
+      refine Pattern.MatchesS.congr (ih (h2 <| some ·)).var fun x => ?_
+      cases x <;> simp [h2 none]
+    | app _ _ ih1 ih2 =>
+      refine Pattern.MatchesS.congr ((ih1 (h2 <| .inl ·)).app (ih2 (h2 <| .inr ·))) fun x => ?_
+      cases x <;> rfl
+
+theorem _root_.Lean4Lean.Pattern.MatchesS.subst {p : Pattern} {e : SExpr} {m1 m2}
+    (H : p.MatchesS e m1 m2) : p.MatchesS (e.subst σ) m1 fun x => (m2 x).subst σ := by
+  induction H with
+  | const => exact Pattern.MatchesS.congr .const nofun
+  | var _ ih => refine Pattern.MatchesS.congr ih.var fun x => ?_; cases x <;> rfl
+  | app _ _ ih1 ih2 => refine Pattern.MatchesS.congr (ih1.app ih2) fun x => ?_; cases x <;> rfl
+
+theorem _root_.Lean4Lean.Pattern.RHS.applyS_lift' {p : Pattern} {m1 m2} (r : p.RHS) :
+    (r.applyS m1 m2).lift' ρ = r.applyS m1 fun x => (m2 x).lift' ρ := by
+  induction r with
+  | fixed c h => exact h.mkInstS.lift'_eq .zero
+  | var => rfl
+  | app _ _ ih1 ih2 => simp only [Pattern.RHS.applyS, SExpr.lift', ih1, ih2]
+
+theorem _root_.Lean4Lean.Pattern.RHS.applyS_subst {p : Pattern} {m1 m2} (r : p.RHS) :
+    (r.applyS m1 m2).subst σ = r.applyS m1 fun x => (m2 x).subst σ := by
+  induction r with
+  | fixed c h => exact h.mkInstS.subst_eq nofun
+  | var => rfl
+  | app _ _ ih1 ih2 => simp only [Pattern.RHS.applyS, SExpr.subst, ih1, ih2]
+
+theorem _root_.Lean4Lean.Pattern.Check.defeqsS_lift' {p : Pattern} {m1 m2} (ck : p.Check) :
+    ck.defeqsS m1 (fun x => (m2 x).lift' ρ) =
+    (ck.defeqsS m1 m2).map fun x => (x.1.lift' ρ, x.2.lift' ρ) := by
+  induction ck <;> simp [Pattern.Check.defeqsS, Pattern.RHS.applyS_lift', *]
+
+theorem _root_.Lean4Lean.Pattern.Check.defeqsS_subst {p : Pattern} {m1 m2} (ck : p.Check) :
+    ck.defeqsS m1 (fun x => (m2 x).subst σ) =
+    (ck.defeqsS m1 m2).map fun x => (x.1.subst σ, x.2.subst σ) := by
+  induction ck <;> simp [Pattern.Check.defeqsS, Pattern.RHS.applyS_subst, *]
+
+omit [Params] in
+/-- Packaging the side-condition list of `WHRed.extra`: a list `dfs` of typed defeqs whose
+untyped projection is `l` exists iff every pair in `l` is defeq at some type. -/
+theorem exists_dfs {α β : Type} {P : β → α → Prop} :
+    ∀ {l : List β}, (∀ x ∈ l, ∃ A, P x A) →
+    ∃ dfs : List (α × β), dfs.map (·.2) = l ∧ ∀ A x, (A, x) ∈ dfs → P x A
+  | [], _ => ⟨[], rfl, nofun⟩
+  | x :: l, h => by
+    obtain ⟨A, hA⟩ := h x (.head _)
+    obtain ⟨dfs, h1, h2⟩ := exists_dfs fun y hy => h y (.tail _ hy)
+    refine ⟨(A, x) :: dfs, by simp [h1], fun A' y h => ?_⟩
+    rcases List.mem_cons.1 h with h | h
+    · cases h; exact hA
+    · exact h2 _ _ h
+
+/-- `e` is a proper prefix of the left-hand side of some rewrite rule, whose next argument is
+a pattern position (for a simple iota pattern `rec a₁ … aₘ (ctor b₁ … bₙ)`: `e = rec a₁ … aₘ`,
+so the next argument is the major premise). -/
+def IsMajorPremise (e : SExpr) : Prop :=
+  ∃ p, (∃ r, Pat p r) ∧ ∃ p₁ p₂, Subpattern (.app p₁ p₂) p ∧ ∃ m1 m2, p₁.MatchesS e m1 m2
+
+/-- The intended use: `f` matches the recursor prefix `p₁` of an iota rule `app p₁ p₂`. -/
+theorem IsMajorPremise.mk {p₁ p₂ : Pattern} {r} {m1 : List SLevel} {m2 : p₁.Path → SExpr}
+    (h : Pat (.app p₁ p₂) r) (hm : p₁.MatchesS f m1 m2) : IsMajorPremise f :=
+  ⟨_, ⟨_, h⟩, _, _, .refl, _, _, hm⟩
+
+theorem IsMajorPremise.lift' {e ρ} : IsMajorPremise (e.lift' ρ) ↔ IsMajorPremise e := by
+  constructor <;> intro ⟨_, h1, _, _, h2, _, _, h3⟩
+  · let ⟨_, h4, _⟩ := Pattern.matchesS_lift'.1 h3
+    exact ⟨_, h1, _, _, h2, _, _, h4⟩
+  · exact ⟨_, h1, _, _, h2, _, _, Pattern.matchesS_lift'.2 ⟨_, h3, fun _ => rfl⟩⟩
+
+theorem IsMajorPremise.subst : IsMajorPremise e → IsMajorPremise (e.subst σ)
+  | ⟨_, h1, _, _, h2, _, _, h3⟩ => ⟨_, h1, _, _, h2, _, _, h3.subst⟩
+
+theorem IsMajorPremise.lam : ¬IsMajorPremise (.lam A e)
+  | ⟨_, _, _, _, _, _, _, h⟩ => nomatch h
+
+theorem IsMajorPremise.sort : ¬IsMajorPremise (.sort u)
+  | ⟨_, _, _, _, _, _, _, h⟩ => nomatch h
+
+theorem IsMajorPremise.forallE : ¬IsMajorPremise (.forallE A B)
+  | ⟨_, _, _, _, _, _, _, h⟩ => nomatch h
+
+scoped notation:65 Γ " ⊢ " e1 " ⤳ " e2:36 => WHRed Γ e1 e2
+/-- Weak-head reduction: `app`/`beta`/`extra` plus the `major` rule, which reduces the
+argument of a matched rule prefix (reduction in major-premise position). -/
+inductive WHRed (Γ : List SExpr) : SExpr → SExpr → Prop where
+  | app : Γ ⊢ f ⤳ f' → Γ ⊢ .app f a ⤳ .app f' a
+  | major : IsMajorPremise f → Γ ⊢ a ⤳ a' → Γ ⊢ .app f a ⤳ .app f a'
+  | beta : Γ ⊢ .app (.lam A e) a ⤳ e.inst a
+  | extra : Pat p r → p.MatchesS e m1 m2 → (dfs : List _).map (·.2) = r.2.defeqsS m1 m2 →
+    (∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) → Γ ⊢ e ⤳ r.1.applyS m1 m2
+
+/-- `extra` with the side conditions stated directly on `defeqsS`. -/
+theorem WHRed.extra' {p : Pattern} {r : p.RHS × p.Check} {m1 : List SLevel} {m2 : p.Path → SExpr}
+    (h1 : Pat p r) (h2 : p.MatchesS e m1 m2)
+    (h3 : ∀ x : SExpr × SExpr, x ∈ r.2.defeqsS m1 m2 → ∃ A, Γ ⊢ x.1 ≡ x.2 : A) :
+    Γ ⊢ e ⤳ r.1.applyS m1 m2 :=
+  let ⟨_, h4, h5⟩ := exists_dfs h3
+  .extra h1 h2 h4 fun _ _ _ h => h5 _ _ h
+
+theorem WHRed.extra_inv {p : Pattern} {r : p.RHS × p.Check} {m1 : List SLevel} {m2 : p.Path → SExpr}
+    {dfs : List (SExpr × SExpr × SExpr)} (h3 : dfs.map (·.2) = r.2.defeqsS m1 m2)
+    (h4 : ∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) :
+    ∀ x : SExpr × SExpr, x ∈ r.2.defeqsS m1 m2 → ∃ A, Γ ⊢ x.1 ≡ x.2 : A := by
+  intro x hx; rw [← h3] at hx
+  obtain ⟨⟨A, a, b⟩, hm, rfl⟩ := List.mem_map.1 hx
+  exact ⟨A, h4 _ _ _ hm⟩
+
+/-- Substitution. The `extra` case needs the side-condition defeqs to be substitutable, which
+is abstracted as `hdf` (for `Ctx.SubstEq Δ σ σ Γ` it is `IsDefEq.subst`). -/
+theorem WHRed.subst
+    (hdf : ∀ {a b A}, Γ ⊢ a ≡ b : A → Δ ⊢ a.subst σ ≡ b.subst σ : A.subst σ)
+    (H : Γ ⊢ e1 ⤳ e2) : Δ ⊢ e1.subst σ ⤳ e2.subst σ := by
+  induction H with
+  | app _ ih => exact .app ih
+  | major h1 _ ih => exact .major h1.subst ih
+  | beta => exact subst_inst ▸ .beta
+  | extra h1 h2 h3 h4 =>
+    rw [Pattern.RHS.applyS_subst]
+    refine .extra' h1 h2.subst fun x hx => ?_
+    rw [Pattern.Check.defeqsS_subst] at hx
+    obtain ⟨y, hy, rfl⟩ := List.mem_map.1 hx
+    have ⟨A, h⟩ := WHRed.extra_inv h3 h4 y hy
+    exact ⟨_, hdf h⟩
+
+theorem WHRed.weak' (W : Ctx.Lift' ρ Γ Γ') (H : Γ ⊢ e1 ⤳ e2) :
+    Γ' ⊢ e1.lift' ρ ⤳ e2.lift' ρ := by
+  induction H with
+  | app _ ih => exact .app ih
+  | major h1 _ ih => exact .major (IsMajorPremise.lift'.2 h1) ih
+  | beta => rw [SExpr.lift'_inst_hi]; exact .beta
+  | extra h1 h2 h3 h4 =>
+    rw [Pattern.RHS.applyS_lift']
+    refine .extra' h1 (Pattern.matchesS_lift'.2 ⟨_, h2, fun _ => rfl⟩) fun x hx => ?_
+    rw [Pattern.Check.defeqsS_lift'] at hx
+    obtain ⟨y, hy, rfl⟩ := List.mem_map.1 hx
+    have ⟨A, h⟩ := WHRed.extra_inv h3 h4 y hy
+    exact ⟨_, h.weak' W⟩
+
+set_option linter.unusedVariables false in
+/-- Inverse weakening. The `extra` case needs strengthening of the side-condition defeqs,
+abstracted as `hinv` (the `SExpr` analogue of `IsDefEqU.weak'_iff` in the `VExpr` theory). -/
+theorem WHRed.weakU_inv (W : Ctx.Lift' ρ Γ Γ')
+    (hinv : ∀ {a b A}, Γ' ⊢ a.lift' ρ ≡ b.lift' ρ : A → ∃ A', Γ ⊢ a ≡ b : A')
+    (H : Γ' ⊢ e1.lift' ρ ⤳ e2') : ∃ e2, e2' = e2.lift' ρ ∧ Γ ⊢ e1 ⤳ e2 := by
+  generalize he : e1.lift' ρ = e1' at H
+  induction H generalizing e1 with
+  | app h1 ih => let .app .. := e1; cases he; obtain ⟨_, rfl, a1⟩ := ih rfl; exact ⟨_, rfl, .app a1⟩
+  | major h1 h2 ih =>
+    let .app .. := e1; cases he; obtain ⟨_, rfl, a1⟩ := ih rfl
+    exact ⟨_, rfl, .major (IsMajorPremise.lift'.1 h1) a1⟩
+  | beta =>
+    let .app e1 _ := e1; let .lam .. := e1; cases he
+    simp [← SExpr.lift'_inst_hi, SExpr.lift'_inj]; exact .beta
+  | extra h1 h2 h3 h4 =>
+    subst he
+    obtain ⟨m2, h5, h6⟩ := Pattern.matchesS_lift'.1 h2; cases funext h6
+    refine ⟨_, (Pattern.RHS.applyS_lift' _).symm, .extra' h1 h5 fun x hx => ?_⟩
+    have ⟨A, h⟩ := WHRed.extra_inv h3 h4 (x.1.lift' ρ, x.2.lift' ρ) <| by
+      rw [Pattern.Check.defeqsS_lift']; exact List.mem_map.2 ⟨x, hx, rfl⟩
+    exact hinv h
+
+def WHNF (Γ : List SExpr) (e : SExpr) := ∀ e', ¬Γ ⊢ e ⤳ e'
+
+theorem WHNF.lam : WHNF Γ (.lam A e) := nofun
+theorem WHNF.sort : WHNF Γ (.sort A) := nofun
+theorem WHNF.forallE : WHNF Γ (.forallE A B) := nofun
+
+/-- A term matching a *strict* subpattern of a rule is in whnf. The `major` case is closed by
+`pat_uniq` alone: the major-premise prefix `f` matches the prefix `p₁'` of some rule
+`p' = app p₁' p₂'`, and also `varN (const c) n`; so `p'` intersects the strict subpattern
+`varN (const c) (n+1)` of `p`, forcing `p' = varN … (n+1)`, which is a `var`, contradicting
+`p' = app _ _`. -/
 theorem WHNF.subpattern
     (h1 : Pat p r) (h2 : Subpattern p₁ p) (h3 : p₁ ≠ p) (h4 : p₁.MatchesS e m1 m2) :
     WHNF Γ e := by
@@ -2305,11 +2475,25 @@ theorem WHNF.subpattern
     let n+1 := n; let .var h4 := h4
     refine ih _ (.trans (.varL .refl) h2) ?_ h4
     rintro rfl; have := h2.sizeOf_le; simp [Pattern.varN] at this; omega
+  | major r1 r2 =>
+    let n+1 := n; let .var h4 := h4
+    obtain ⟨p', ⟨_, h1'⟩, p₁', p₂', h2', _, _, h3'⟩ := r1
+    cases Params.simple_app h1' h2'
+    have ⟨q, a1⟩ := Pattern.matchesS_inter h3' h4
+    have a2 : (Pattern.app p₁' p₂').inter (.varN (.const c) (n+1)) = some (.app q p₂') := by
+      simp [Pattern.varN, Pattern.inter, a1]
+    obtain ⟨rfl, eq, -⟩ := pat_uniq h1 h1' h2 a2
+    simp [Pattern.varN] at eq
   | beta => let n+1 := n; let .var h4 := h4; exact h4.varN_const_lam
   | extra r1 r2 =>
     have ⟨_, a1⟩ := Pattern.matchesS_inter r2 h4
     obtain ⟨rfl, eq, _⟩ := pat_uniq h1 r1 h2 a1
     exact h3 eq.symm
+
+theorem IsMajorPremise.whnf : IsMajorPremise e → WHNF Γ e := by
+  rintro ⟨p, ⟨_, h1⟩, p₁, p₂, h2, _, _, h3⟩
+  refine .subpattern h1 (.trans (.appL .refl) h2) ?_ h3
+  rintro rfl; exact Pattern.ne_app_self (h2.antisymm (.appL .refl))
 
 theorem WHNF.pat_app_l (h1 : Pat p r) (h2 : p.MatchesS (.app f a) m1 m2) : WHNF Γ f := by
   obtain ⟨_|_, rfl⟩ := pat_simple h1
@@ -2317,16 +2501,30 @@ theorem WHNF.pat_app_l (h1 : Pat p r) (h2 : p.MatchesS (.app f a) m1 m2) : WHNF 
     exact WHNF.subpattern h1 (.appL .refl) Pattern.ne_app_self h3
   · nomatch h2
 
+theorem WHNF.pat_app_r (h1 : Pat p r) (h2 : p.MatchesS (.app f a) m1 m2) : WHNF Γ a := by
+  obtain ⟨_|_, rfl⟩ := pat_simple h1
+  · let .app _ h3 := h2
+    exact WHNF.subpattern h1 (.appR .refl) Pattern.ne_app_self_r h3
+  · nomatch h2
+
 theorem WHRed.determ (H1 : Γ ⊢ e ⤳ e₁) (H2 : Γ ⊢ e ⤳ e₂) : e₁ = e₂ := by
   induction H1 generalizing e₂ with
   | app l1 ih =>
     cases H2 with
     | app r1 => cases ih r1; rfl
+    | major r1 => cases r1.whnf _ l1
     | beta => cases WHNF.lam _ l1
     | extra r1 r2 => cases WHNF.pat_app_l r1 r2 _ l1
+  | major l1 l2 ih =>
+    cases H2 with
+    | app r1 => cases l1.whnf _ r1
+    | major _ r2 => cases ih r2; rfl
+    | beta => cases l1.lam
+    | extra r1 r2 => cases WHNF.pat_app_r r1 r2 _ l2
   | beta =>
     cases H2 with
     | app r1 => cases WHNF.lam _ r1
+    | major r1 => cases r1.lam
     | beta => rfl
     | extra r1 r2 =>
       obtain ⟨_|_, rfl⟩ := pat_simple r1
@@ -2339,6 +2537,7 @@ theorem WHRed.determ (H1 : Γ ⊢ e ⤳ e₁) (H2 : Γ ⊢ e ⤳ e₂) : e₁ = 
       · let .app l3 _ := l2; exact l3.varN_const_lam.elim
       · nomatch l2
     | app r1 => cases WHNF.pat_app_l l1 l2 _ r1
+    | major r1 r2 => cases WHNF.pat_app_r l1 l2 _ r2
     | extra r1 r2 =>
       have ⟨_, a1⟩ := Pattern.matchesS_inter r2 l2
       obtain ⟨rfl, -, ⟨⟩⟩ := pat_uniq l1 r1 .refl a1
@@ -2347,11 +2546,12 @@ theorem WHRed.determ (H1 : Γ ⊢ e ⤳ e₁) (H2 : Γ ⊢ e ⤳ e₂) : e₁ = 
 def WHRedS (Γ : List SExpr) : SExpr → SExpr → Prop := ReflTransGen (WHRed Γ)
 scoped notation:65 Γ " ⊢ " e1 " ⤳* " e2:36 => WHRedS Γ e1 e2
 
-theorem WHRedS.subst (W : Ctx.Subst HasType Δ σ Γ) (H : Γ ⊢ e1 ⤳* e2) :
-    Δ ⊢ e1.subst σ ⤳* e2.subst σ := by
+theorem WHRedS.subst
+    (hdf : ∀ {a b A}, Γ ⊢ a ≡ b : A → Δ ⊢ a.subst σ ≡ b.subst σ : A.subst σ)
+    (H : Γ ⊢ e1 ⤳* e2) : Δ ⊢ e1.subst σ ⤳* e2.subst σ := by
   induction H with
   | rfl => exact .rfl
-  | tail _ h2 ih => exact .tail ih (h2.subst W)
+  | tail _ h2 ih => exact .tail ih (h2.subst hdf)
 
 theorem WHRedS.defeq (H : Γ ⊢ e1 ⤳* e2) (he : Γ ⊢ e1 : A) : Γ ⊢ e1 ≡ e2 : A := sorry
 
@@ -2366,13 +2566,20 @@ theorem WHRedS.app (H : Γ ⊢ e1 ⤳* e2) : Γ ⊢ e1.app a ⤳* e2.app a := by
   | rfl => exact .rfl
   | tail _ h2 ih => exact .tail ih h2.app
 
-theorem WHRedS.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e1.lift' ρ ⤳* e2') :
-    ∃ e2, e2' = e2.lift' ρ ∧ Γ ⊢ e1 ⤳* e2 := by
+theorem WHRedS.major (H1 : IsMajorPremise f) (H : Γ ⊢ a ⤳* a') :
+    Γ ⊢ f.app a ⤳* f.app a' := by
+  induction H with
+  | rfl => exact .rfl
+  | tail _ h2 ih => exact .tail ih (h2.major H1)
+
+theorem WHRedS.weakU_inv (W : Ctx.Lift' ρ Γ Δ)
+    (hinv : ∀ {a b A}, Δ ⊢ a.lift' ρ ≡ b.lift' ρ : A → ∃ A', Γ ⊢ a ≡ b : A')
+    (H : Δ ⊢ e1.lift' ρ ⤳* e2') : ∃ e2, e2' = e2.lift' ρ ∧ Γ ⊢ e1 ⤳* e2 := by
   induction H with
   | rfl => exact ⟨_, rfl, .rfl⟩
   | tail _ h2 ih =>
     obtain ⟨_, rfl, a1⟩ := ih
-    obtain ⟨_, rfl, a2⟩ := h2.weakU_inv W
+    obtain ⟨_, rfl, a2⟩ := h2.weakU_inv W hinv
     exact ⟨_, rfl, .tail a1 a2⟩
 
 theorem WHRedS.determ_l (H1 : Γ ⊢ e ⤳* e₁) (H2 : Γ ⊢ e ⤳* e₂) (W2 : WHNF Γ e₂) : Γ ⊢ e₁ ⤳* e₂ := by
@@ -2459,6 +2666,12 @@ theorem InferType.weak' (W : Ctx.Lift' ρ Γ Δ) : Γ ⊢ e ▷ A → Δ ⊢ e.l
   | .lam h1 h2 => .lam (h1.weak' W) (h2.weak' W.cons)
   | .forallE h1 h2 h3 h4 => .forallE (h1.weak' W) (h2.weak' W) (h3.weak' W.cons) (h4.weak' W.cons)
 
+/-- Strengthening of a defeq along a context lift (the `SExpr` analogue of `IsDefEqU.weak'_iff`).
+Pre-existing sorry: this obligation was the `extra` case of `WHRed.weakU_inv` (now its `hinv`
+hypothesis). Only used by the `InferType` lemmas below, which are not on the unique-typing chain. -/
+theorem IsDefEq.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ a.lift' ρ ≡ b.lift' ρ : A) :
+    ∃ A', Γ ⊢ a ≡ b : A' := sorry
+
 theorem InferType.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e.lift' ρ ▷ A') :
     ∃ A, A' = A.lift' ρ ∧ Γ ⊢ e ▷ A := by
   generalize he : e.lift' ρ = e' at H
@@ -2471,7 +2684,7 @@ theorem InferType.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e.lift' ρ ▷ 
   | app h1 h2 h3 ih =>
     let .app .. := e; cases he
     obtain ⟨_, rfl, a1⟩ := ih W rfl
-    obtain ⟨F, a2, a3⟩ := h2.weakU_inv W; cases F <;> cases a2
+    obtain ⟨F, a2, a3⟩ := h2.weakU_inv W (IsDefEq.weakU_inv W); cases F <;> cases a2
     refine ⟨_, by rw [SExpr.lift'_inst_hi], .app a1 a3 (h3.weak'_inv W)⟩
   | lam h1 h2 ih =>
     let .lam .. := e; cases he
@@ -2480,14 +2693,20 @@ theorem InferType.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e.lift' ρ ▷ 
   | forallE h1 h2 h3 h4 ih1 ih2 =>
     let .forallE .. := e; cases he
     obtain ⟨_, rfl, a1⟩ := ih1 W rfl
-    obtain ⟨U, a2, a3⟩ := h2.weakU_inv W; cases U <;> cases a2
+    obtain ⟨U, a2, a3⟩ := h2.weakU_inv W (IsDefEq.weakU_inv W); cases U <;> cases a2
     obtain ⟨_, rfl, b1⟩ := ih2 W.cons rfl
-    obtain ⟨V, b2, b3⟩ := h4.weakU_inv W.cons; cases V <;> cases b2
+    obtain ⟨V, b2, b3⟩ := h4.weakU_inv W.cons (IsDefEq.weakU_inv W.cons); cases V <;> cases b2
     exact ⟨_, rfl, .forallE a1 a3 b1 b3⟩
 
 theorem InferType.weak'_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e.lift' ρ ▷ A.lift' ρ) : Γ ⊢ e ▷ A := by
   obtain ⟨_, h1, h2⟩ := H.weakU_inv W
   exact SExpr.lift'_inj.1 h1 ▸ h2
+
+/-- Substitution of an `InferType`-typed substitution into a defeq. Pre-existing sorry: this
+obligation was the `extra` case of `WHRed.subst` (now its `hdf` hypothesis); it would follow from
+`IsDefEq.subst` given `InferType.hasType` (itself a sorry). Only used by `InferType.subst`. -/
+theorem IsDefEq.subst_inferType (W : Ctx.Subst InferType Δ σ Γ) (H : Γ ⊢ a ≡ b : A) :
+    Δ ⊢ a.subst σ ≡ b.subst σ : A.subst σ := sorry
 
 theorem InferType.subst (W : Ctx.Subst InferType Δ σ Γ)
     (H : Γ ⊢ e ▷ A) : Δ ⊢ e.subst σ ▷ A.subst σ := by
@@ -2501,11 +2720,13 @@ theorem InferType.subst (W : Ctx.Subst InferType Δ σ Γ)
   | const h1 h2 =>
     rw [(henv.closedC h1).mkInstS.subst_eq .zero]
     exact .const h1 h2
-  | app h1 h2 h3 ih => exact subst_inst ▸ .app (ih W) (h2.subst W) (h3.subst W)
+  | app h1 h2 h3 ih =>
+    exact subst_inst ▸ .app (ih W) (h2.subst (IsDefEq.subst_inferType W)) (h3.subst W)
   | lam h1 h2 ih => exact .lam (h1.subst W) (ih (W.lift .bvar fun W h => h.weak' W))
   | forallE h1 h2 h3 h4 ih1 ih2 =>
-    exact .forallE (ih1 W) (h2.subst W) (ih2 (W.lift .bvar fun W h => h.weak' W))
-      (h4.subst (W.lift .bvar fun W h => h.weak' W))
+    exact .forallE (ih1 W) (h2.subst (IsDefEq.subst_inferType W))
+      (ih2 (W.lift .bvar fun W h => h.weak' W))
+      (h4.subst (IsDefEq.subst_inferType (W.lift .bvar fun W h => h.weak' W)))
 
 theorem InferType.inst (H₀ : Γ ⊢ a ▷ A₀) (H : A₀::Γ ⊢ e ▷ A) :
     Γ ⊢ e.inst a ▷ A.inst a := .subst (.one .bvar (fun W h => h.weak' W) H₀) H
@@ -2543,7 +2764,7 @@ theorem InferTypeS.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e.lift' ρ ▷
     ∃ A, A' = A.lift' ρ ∧ Γ ⊢ e ▷* A := by
   let ⟨_, h1, h2⟩ := H
   obtain ⟨_, rfl, a1⟩ := h1.weakU_inv W
-  obtain ⟨_, rfl, a2⟩ := h2.weakU_inv W
+  obtain ⟨_, rfl, a2⟩ := h2.weakU_inv W (IsDefEq.weakU_inv W)
   exact ⟨_, rfl, _, a1, a2⟩
 
 scoped notation:65 Γ " ⊢ " e1 " ≡ₚ " e2 " : " A:36 => NormalEq Γ e1 e2 A
@@ -2670,4 +2891,8 @@ theorem InferType.whRed (H1 : Γ ⊢ e ⤳ e') (H2 : Γ ⊢ e ▷ A) : Γ ⊢ e'
     let .lam b1 b2 := a1
     cases WHNF.forallE.whRedS a2
     exact .inst sorry b2
+  | major =>
+    -- Not provable as stated: `InferType.app` infers `B.inst a'` for the reduct, which is defeq
+    -- but not equal to `B.inst a`; the lemma would need restating up to defeq.
+    sorry
   | extra => sorry

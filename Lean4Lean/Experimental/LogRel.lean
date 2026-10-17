@@ -207,7 +207,7 @@ def LRIsType.weak' (J : Γ ⊩[u] A) : Δ ⊩[u] A.lift' ρ := by
   induction J using LRIsType.rec with
   | stuck h1 h2 h3 =>
     refine ⟨_, .stuck (fun _ a1 a2 => ?_) (h2.weak' W) (h3.weak' W)⟩
-    obtain ⟨_, rfl, b1⟩ := a1.weakU_inv W; exact h1 _ b1 a2.weak'_inv
+    obtain ⟨_, rfl, b1⟩ := a1.weakU_inv W (IsDefEq.weakU_inv W); exact h1 _ b1 a2.weak'_inv
   | sort h1 h2 h3 => exact ⟨_, .sort (h1.weak' W) (h2.weak' W) (h3.weak' W)⟩
   | @forallE _ _ _ _ _ _ h1 h2 h3 h4 h5 h6 h7 h8 ih1 ih2 =>
     refine .forallE (h1.weak' W) (h2.weak' W) (h3.weak' W.cons) (h4.weak' W.cons) (h5.weak' W)
