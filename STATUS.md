@@ -54,15 +54,14 @@ contains `sorry`. On this branch, for `IsDefEq'.uniq`, the output is:
 
 ```
 axioms reached (4): Classical.choice, Quot.sound, propext, sorryAx
-constants directly containing sorry (4):
-  Lean4Lean.SExpr.IsDefEq.defeqDF_l'
-  Lean4Lean.SExpr.IsDefEq.strong
-  Lean4Lean.SExpr.IsDefEq.subst
+constants directly containing sorry (1):
   Lean4Lean.SExpr.LR.adequacy
 ```
 
-No project-specific axioms remain. Three of the four sorries are one cluster
-(the strong judgment, §4.2). The fourth is the real gap (§6).
+No project-specific axioms remain. The one sorry is the `const` case of the
+fundamental lemma, the real gap (§6). The environment-side theorems
+(`Params.const_wf`, `defeq_wf`, `extra_pat`, `ctor_ty`, `envStrongS`,
+`IsDefEq.strong`) reach no sorry at all.
 
 ## 4. What this branch changed
 
@@ -77,13 +76,13 @@ lists them.
   `lookup` are proven. (`8fae8db`)
 - `IsDefEq.strong : Γ ⊢ e1 ≡ e2 : A → IsDefEqStrong Γ e1 e2 A` is **false**
   without a well-formed-context hypothesis: `[bvar 5] ⊢ bvar 0 : bvar 6` holds
-  in the weak system and has no strong derivation. A counterexample is
-  formalised on branch `strong`. The fix threads `⊢ Γ` through the chain, as
-  `Theory/` does with `OnCtx Γ (env.IsType U)`.
+  in the weak system and has no strong derivation (the counterexample was
+  formalised during the port). The fix threads `⊢ Γ` (`Ctx.WF`) through the
+  chain, as `Theory/` does with `OnCtx Γ (env.IsType U)`. (`cd97547`)
 - `Params.ctor_ty` cannot be derived from a defeq-only description of
   constructor types (strengthening it is circular). Constructor types must be
   assumed *syntactically* a Π-telescope ending in the inductive type, which is
-  what Lean's kernel guarantees. (branch `strong`, `ae87af1`)
+  what Lean's kernel guarantees. (`ae87af1`)
 
 ### 4.2 Closed gaps
 
@@ -92,13 +91,11 @@ lists them.
 | `IsDefEqStrong.defeq` | proven (`f29e16a`) |
 | `WHRed.determ`, the `extra` cases | proven from `pat_simple` and `pat_uniq` alone (`e8c6bd8`) |
 | axiom `Params.extra_pat` | now a theorem, derived from a `VExpr`-level `Params` field `extra_patV` (`09407ee`) |
-| sorried `Params.ctor_ty` | now a theorem, derived from a `VExpr`-level field (`cb5fae8`; being replaced by the syntactic form on branch `strong`) |
+| sorried `Params.ctor_ty` | now a theorem, derived from the syntactic `VExpr`-level fields `ctor_syn`/`ctor_sort` (`cb5fae8`, `ae87af1`) |
 | typing of environment constants in `SExpr` | `Params.const_wf`, `Params.defeq_wf`, derived from `henv : env.Ordered` through the translation (`c6fe5e8`) |
 | translation `VEnv.IsDefEq → SExpr.IsDefEq` | `SExpr.IsDefEq.mkS`, a port of the closed upstream PR #37 including its `mkInst` fix (`e13a52d`, `ed87ab6`) |
-| `IsDefEq.strong`, `IsDefEq.subst`, `IsDefEq.defeqDF_l'`, `IsDefEq.isType` | proven in scratch for the `⊢ Γ` versions, no sorry; integration in progress on branch `strong` |
-
-When branch `strong` lands, the tracer should list exactly one sorry:
-`LR.adequacy`.
+| `IsDefEq.strong`, `IsDefEq.subst`, `IsDefEq.defeqDF_l'`, `IsDefEq.isType` | proven for the `⊢ Γ` versions, a port of `Theory/Typing/Strong.lean` (`30996fa`, `cd97547`); `Params.envStrongS` gives strong typing of every environment object with no hypotheses |
+| `major` rule for `SExpr`'s `WHRed` (reduction in major-premise position, §6) | proven in scratch with its determinism and weakening lemmas, no new `Params` fields; splice pending |
 
 ## 5. What is assumed: the `Params` class
 
@@ -111,8 +108,8 @@ repo yet. Its fields:
   `etaCtor`, `indTy`), and matching patterns coincide.
 - `extra_patV`: every instantiated environment rule is an instance of such a
   pattern, with its side conditions holding.
-- `ctor_tyV` (to become `ctor_syn` + `ctor_sort`): constructor types are a
-  Π-telescope over the inductive type, at a sort that is never `Prop`.
+- `ctor_syn`, `ctor_sort`: constructor types are *syntactically* a Π-telescope
+  over the inductive type, at a sort that is never `Prop`.
 
 Building a `Params` instance for the environments Lean4Lean actually produces
 is future work and depends on the still-unfinished inductive-type
@@ -152,7 +149,8 @@ happen. With the relation unchanged the lemma is false, not merely unproven
 2. A `major` rule in `SExpr`'s `WHRed` (reduction in major-premise position).
    `Theory/Typing/HeadReduction.lean` has it; the `SExpr` version dropped it.
    Without it a recursor whose argument merely *reduces* to a constructor can
-   never fire.
+   never fire. This is done in scratch (determinism from `pat_simple` and
+   `pat_uniq` alone) and is being spliced in.
 3. A termination measure for rule right-hand sides, which are not
    subderivations. The answer, taken from the artifact's fixpoint case: keep the
    outer induction on the derivation, and inside the `const` case induct on the

@@ -5051,8 +5051,8 @@ theorem LE_Interp.build_spine {m1 : p.Path → TShape} {m2} (a2 : p.MatchesS LHS
         Const.indTy (rargs := .replicate args.length .bot) (List.length_replicate ▸ hI) .rfl
           |>.lift k'.le_succ .mono
 
-theorem LE_Interp.strongSound (H : Γ ⊢ M ≡ N : A) : StrongSoundEq Γ M N A := by
-  replace H := H.strong
+/-- Soundness of the strong judgment for the logical relation. -/
+theorem LE_Interp.strongSoundS (H : IsDefEqStrong Γ M N A) : StrongSoundEq Γ M N A := by
   induction H with
   | @bvar _ i A _ h h2 ih =>
     refine .rfl ⟨.bvar h, fun _ _ W _ h => ?_, .bvar h, .rfl⟩; clear h2 ih
@@ -5083,7 +5083,7 @@ theorem LE_Interp.strongSound (H : Γ ⊢ M ≡ N : A) : StrongSoundEq Γ M N A 
     induction h with cases eq | const b1 b2 b3 b4 b5 b6 b7 => ?_ | bot =>
       exact .mk .rfl .bot .bot (.bot_T' <| .bot .sort)
     cases a1.symm.trans b1; exact .mk b3 (.const b1 b2 .rfl b4 b5 b6 b7) b5 b4
-  | appDF _ _ _ _ ihA ih1 ih2 ih3 =>
+  | appDF _ _ _ _ _ ihA _ ih1 ih2 ih3 =>
     refine .mk' (.appDF ih1.defeq ih2.defeq)
       (.app ihA.left.sound ih1.left ih2.left) .rfl
       (.app ihA.left.sound ih1.right ih2.right) ih3.sound.symm fun _ _ W m => ?_
@@ -5258,9 +5258,16 @@ theorem LE_Interp.strongSound (H : Γ ⊢ M ≡ N : A) : StrongSoundEq Γ M N A 
       exact .mono hm_le_typed <| h_foldr_eq ▸ apps_realize W h_m_typed_HT.T ha
         (h_foldr_eq ▸ ih1.left) h_per_arg (.pat a1 hMatch (hRHS.mono_l hbnd))
 
-theorem LE_Interp.sound (H : Γ ⊢ M ≡ N : A) (W : Valuation.Fits Γ₀ Γ ρ) {m} :
+theorem LE_Interp.strongSound (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A) : StrongSoundEq Γ M N A :=
+  strongSoundS (H.strong hΓ)
+
+theorem LE_Interp.soundS (H : IsDefEqStrong Γ M N A) (W : Valuation.Fits Γ₀ Γ ρ) {m} :
     (LE_Interp ρ m M ↔ LE_Interp ρ m N) ∧ (LE_Interp ρ m M → InterpTyped ρ m M A) :=
-  ⟨(strongSound H).sound W, (strongSound H).left.sound W⟩
+  ⟨(strongSoundS H).sound W, (strongSoundS H).left.sound W⟩
+
+theorem LE_Interp.sound (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A) (W : Valuation.Fits Γ₀ Γ ρ) {m} :
+    (LE_Interp ρ m M ↔ LE_Interp ρ m N) ∧ (LE_Interp ρ m M → InterpTyped ρ m M A) :=
+  soundS (H.strong hΓ) W
 
 structure LogRelBase (Γ : List SExpr) (n : Nat) where
   /-- Term validity: `M ≡ N : A` at element-shape `m` and type-shape `a`. -/
@@ -6064,7 +6071,7 @@ def LR.Subst1 (Γ₀ : List SExpr) (x x' A₀ A A' : SExpr) (ρ : Valuation) (i 
     ∀ {{m : WShape n}}, LE_Interp ρ m.T (.bvar i) → m.HasType a → (LR Γ₀).DefEq x x' A m a
 
 inductive LR.SubstWF (Γ₀ : List SExpr) : Subst → Subst → List SExpr → Valuation → Prop where
-  | id : LR.SubstWF Γ₀ .id .id Γ₀ .nil
+  | id : ⊢ Γ₀ → LR.SubstWF Γ₀ .id .id Γ₀ .nil
   | cons : LR.SubstWF Γ₀ σ.tail σ'.tail Γ ρ →
     (∀ {a}, LE_Interp ρ a A →
       ∃ a', a ≤ a' ∧ LE_Interp ρ a' A ∧ a'.HasType .type) →
@@ -6073,16 +6080,26 @@ inductive LR.SubstWF (Γ₀ : List SExpr) : Subst → Subst → List SExpr → V
     LR.SubstWF Γ₀ σ σ' (A :: Γ) (ρ.push x)
 
 theorem LR.SubstWF.fits : LR.SubstWF Γ₀ σ σ' Γ ρ → ρ.Fits Γ₀ Γ
-  | .id => .nil
+  | .id _ => .nil
   | .cons W h1 h2 h3 _ _ => .cons W.fits h1 h2 h3
 
 theorem LR.SubstWF.toSubstEq : LR.SubstWF Γ₀ σ σ' Γ ρ → Ctx.SubstEq Γ₀ σ σ' Γ
-  | .id => .nil
+  | .id _ => .nil
   | .cons W _ _ _ hA h0 => .cons W.toSubstEq hA h0.1
+
+/-- The target context of a well-formed substitution is well formed. -/
+theorem LR.SubstWF.wf₀ : LR.SubstWF Γ₀ σ σ' Γ ρ → ⊢ Γ₀
+  | .id h => h
+  | .cons W _ _ _ _ _ => W.wf₀
+
+/-- The source context of a well-formed substitution is well formed. -/
+theorem LR.SubstWF.wf : LR.SubstWF Γ₀ σ σ' Γ ρ → ⊢ Γ
+  | .id h => h
+  | .cons W _ _ _ hA _ => ⟨W.wf, _, hA⟩
 
 theorem LR.SubstWF.left (W : LR.SubstWF Γ₀ σ σ' Γ ρ) : LR.SubstWF Γ₀ σ σ Γ ρ := by
   induction W with
-  | id => exact .id
+  | id h => exact .id h
   | cons _ h1 h2 h3 hA h0 ih =>
     refine .cons ih h1 h2 h3 hA ⟨h0.1.hasType.1, fun _ a ha => ⟨fun ht => ?_, fun _ hM hmem => ?_⟩⟩
     · have ⟨⟨_, h1⟩, h2⟩ := (h0.2 a ha).1 ht; exact ⟨⟨_, h1.hasType.1⟩, (LR _).left_ty h2⟩
@@ -6090,7 +6107,7 @@ theorem LR.SubstWF.left (W : LR.SubstWF Γ₀ σ σ' Γ ρ) : LR.SubstWF Γ₀ �
 
 theorem LR.SubstWF.symm (W : LR.SubstWF Γ₀ σ σ' Γ ρ) : LR.SubstWF Γ₀ σ' σ Γ ρ := by
   induction W with
-  | id => exact .id
+  | id h => exact .id h
   | cons _ h1 h2 h3 hA h0 ih =>
     refine .cons ih h1 h2 h3 hA ⟨?_, fun _ a ha => ⟨fun ht => ?_, fun _ hM hmem => ?_⟩⟩
     · have ⟨⟨_, h1⟩, _⟩ := (h0.2 (n := 0) _ .bot).1 (.bot .sort)
