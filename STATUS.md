@@ -131,10 +131,12 @@ green too. The tracer is not yet a pass/fail CI check (a good first task, §8).
   (`e13a52d`). Sort injectivity and sort/Pi disjointness reflect back to
   `VExpr` (`sort_invS`, `sort_forallE_invS`); Pi-injectivity reflects only to
   an `SExpr` statement so far (`forallE_invS`), see §7.
-- In flight on branch `major`: the `major` rule for `SExpr`'s `WHRed`
-  (reduction in major-premise position, §6), proven in scratch with its
-  determinism and weakening lemmas and no new `Params` fields. Consider it
-  taken.
+- The `major` rule for `SExpr`'s `WHRed` (reduction in major-premise
+  position, §6) is in, with `IsMajorPremise`, determinism and weakening
+  lemmas, and no new `Params` fields (`b2516c4`). `WHRed.subst` and
+  `WHRedS.weakU_inv` now take an explicit defeq-transport hypothesis, because
+  their `extra` cases were sorried upstream; the off-path `InferType` lemmas
+  keep named, documented sorries for it.
 
 ## 5. What is assumed: the `Params` class
 
@@ -198,7 +200,8 @@ happen. With the relation unchanged the lemma is false, not merely unproven
 2. A `major` rule in `SExpr`'s `WHRed` (reduction in major-premise position).
    `Theory/Typing/HeadReduction.lean` has it; the `SExpr` version dropped it.
    Without it a recursor whose argument merely *reduces* to a constructor can
-   never fire. Proven in scratch; being spliced (branch `major`).
+   never fire. Done (`b2516c4`): `WHRed.major`, `IsMajorPremise`,
+   `WHRedS.major`, and `WHRed.determ` re-proven with the new case.
 3. A termination measure for rule right-hand sides, which are not
    subderivations. Taken from the mechanisation's fixpoint case: keep the
    outer induction on the derivation and, inside the `const` case only, induct
@@ -243,7 +246,7 @@ Workflow that has worked here:
   ([slides](https://msp.cis.strath.ac.uk/types2025/slides/TYPES2025-slides31.pdf))
   ends its unique-typing section with "Type theorists wanted!".
 
-Good first tasks (the `major` rule is taken):
+Good first tasks:
 
 - Turn `scripts/TraceSorry.lean` into a pass/fail check (expected sorry set
   for `IsDefEq'.uniq` is exactly `{LR.adequacy}`, no axioms beyond the three
