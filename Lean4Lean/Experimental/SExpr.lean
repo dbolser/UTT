@@ -46,24 +46,51 @@ class Params where
     env.defeqs df → (∀ l ∈ ls, l.WF univs) → ls.length = df.uvars →
     ∃ p r m1 m2, Pat p r ∧ p.Matches (df.lhs.instL ls) m1 m2 ∧
       r.2.OK (env.IsDefEqU univs Γ) m1 m2 ∧ df.rhs.instL ls = r.1.apply m1 m2
-  /-- The type of a constructor (`classify c = ctor/etaCtor`) is, in the universe context of the
-  constant, defeq to a Π-telescope `Ts` over an application of the inductive type `I` (at the
-  constant's own universe parameters) to `args`, at a sort `u` that is non-zero under every
-  universe assignment.  `Ts.length` is the classified arity and `I` is classified as an inductive
-  type with `args.length` indices.  The non-zero condition is what makes the instantiated sort
-  `SLevel.mk (u.inst ls) ≠ .zero` for every level list `ls`, as needed by the `SExpr` form
-  `Params.ctor_ty`; it excludes classifying constructors of universe-polymorphic inductives that
-  can be instantiated to `Prop` (e.g. `PUnit.{u}`). -/
-  ctor_tyV {c : Name} {cl : Classification} {ci : VConstant} :
+  /-- The type of a constructor (`classify c = ctor/etaCtor`) *is* syntactically a Π-telescope
+  `Ts` over an application of the inductive type `I` (at the constant's own universe parameters)
+  to `args`, with `Ts.length` the classified arity and `I` classified as an inductive type with
+  `args.length` indices.  Lean's kernel guarantees this shape for every constructor it accepts.
+  A merely *definitional* equation to such a telescope would not do: the strong judgment
+  `IsDefEqStrong.const` needs the equation as a strong derivation, and translating a defeq
+  derivation that lives in the full environment can require the strong typing of the very
+  constant whose type is being described (`IsDefEq.strong` is then unprovable in general). -/
+  ctor_syn {c : Name} {cl : Classification} {ci : VConstant} :
     (cl matches .ctor .. | .etaCtor ..) → classify c = some cl → env.constants c = some ci →
+    ∃ (I : Name) (Ts args : List VExpr),
+      Ts.length = cl.arity ∧ classify I = some (.indTy args.length) ∧
+      ci.type = Ts.foldr .forallE
+        (args.foldr (fun A acc => acc.app A) (.const I (VLevel.params ci.uvars)))
+  /-- Every derivable sort of (an instance of) a constructor's type is non-zero under every
+  universe assignment.  This is what makes the instantiated sort `SLevel.mk u ≠ .zero` demanded
+  by `CtorBundle.hu0`; it excludes classifying constructors of universe-polymorphic inductives
+  that can be instantiated to `Prop` (e.g. `PUnit.{u}`), which must stay unclassified.  It is
+  stated for every derivable sort rather than one canonical sort because the strong `const`
+  rule ties the bundle's sort to the sort of the derivation at hand, and sort uniqueness is not
+  available at this point. -/
+  ctor_sort {c : Name} {cl : Classification} {ci : VConstant} {U : Nat} {vs : List VLevel}
+      {u : VLevel} :
+    (cl matches .ctor .. | .etaCtor ..) → classify c = some cl → env.constants c = some ci →
+    (∀ l ∈ vs, l.WF U) → vs.length = ci.uvars →
+    env.HasType U [] (ci.type.instL vs) (.sort u) → ∀ ns, u.eval ns ≠ 0
+open Params
+variable [Params]
+
+/-- The former `Params` field: a constructor's type is definitionally (indeed syntactically) a
+Π-telescope over its inductive type, at a sort that is never zero. -/
+theorem Params.ctor_tyV {c : Name} {cl : Classification} {ci : VConstant}
+    (hctor : cl matches .ctor .. | .etaCtor ..) (hcl : classify c = some cl)
+    (hci : env.constants c = some ci) :
     ∃ (I : Name) (Ts args : List VExpr) (u : VLevel),
       Ts.length = cl.arity ∧ classify I = some (.indTy args.length) ∧ (∀ ns, u.eval ns ≠ 0) ∧
       env.IsDefEq ci.uvars [] ci.type
         (Ts.foldr .forallE
           (args.foldr (fun A acc => acc.app A) (.const I (VLevel.params ci.uvars))))
-        (.sort u)
-open Params
-variable [Params]
+        (.sort u) := by
+  obtain ⟨I, Ts, args, hTs, hI, heq⟩ := ctor_syn hctor hcl hci
+  have ⟨u, hu⟩ := henv.constWF hci
+  have hwf : ci.type.LevelWF ci.uvars := (hu.levelWF ⟨⟩).1
+  refine ⟨I, Ts, args, u, hTs, hI, ?_, heq ▸ hu⟩
+  exact ctor_sort hctor hcl hci VLevel.params_wf VLevel.params_length (by rwa [hwf.instL_id])
 
 /-- A semantically quotiented version of `VLevel`. This avoids the need for some congruences. -/
 def SLevel := { f : List Nat → Nat // ∃ l : VLevel, l.WF univs ∧ l.eval = f }
