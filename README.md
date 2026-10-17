@@ -1,3 +1,9 @@
+> **This fork works on the unique typing conjecture for Lean's type theory.**
+> Start with [STATUS.md](STATUS.md): what is proven, what is assumed, the one
+> remaining gap, and how to check every claim. Upstream is
+> [digama0/lean4lean](https://github.com/digama0/lean4lean); everything here
+> builds on Mario Carneiro's work there.
+
 # Lean-for-Lean
 
 This is an implementation of the Lean 4 kernel written in (mostly) pure Lean 4.
