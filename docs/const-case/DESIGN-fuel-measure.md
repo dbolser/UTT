@@ -250,8 +250,10 @@ ultimately about.
   like Section 2, with the ctor clause unable to help (shape is `bot`). Needs either a typed
   eta-expansion step in `WHRed` or restricting `etaCtor` to small elimination. Pre-existing;
   flagged.
-* Quotients: `Quot.lift f h (Quot.mk r a) ⤳ f a` fits `SimplePattern.iota` with `Quot.mk`
-  a ctor of the `indTy` `Quot`; RHS has no closed leaves; handled by Steps B/C unchanged.
+* Quotients: EXCLUDED, not handled (correction). `Quot.mk.{u} : {α : Sort u} → (r : α → α → Prop) →
+  α → Quot r` has a type whose sort evaluates to `0` at `u := 0`, so `Params.ctor_sort` forbids
+  classifying `Quot.mk` as `.ctor`; then `pat_wf` keeps it out of patterns and `extra_patV`
+  keeps the `Quot.lift` rule out of `env.defeqs`. Same mechanism as `PUnit`.
 
 ## 8. Risks / where I am guessing
 * The ctor clause's `trans`/`join`/`mono` fields are someone else's; I assume they go

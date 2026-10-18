@@ -174,10 +174,10 @@ is a stub. The paper's conclusion names (co)inductive types and proof
 irrelevance with axiom K as not yet covered. This fork's shape model
 additionally excludes K-like reduction, iota on Prop-valued inductives
 (`Eq.rec`, `Acc.rec`), universe-polymorphic inductives instantiable at `Prop`
-(`PUnit`), and structure eta on variables; see
-`docs/const-case/DESIGN-fuel-measure.md` §7 for how each exclusion is encoded
-(`pat_wf`, `ctor_sort`, the absence of a `major`-style eta rule). These are
-limitations of the current model, not of the route.
+(`PUnit`, and `Quot.mk`, so quotients are excluded too), and structure eta on
+variables; see `docs/const-case/DESIGN-fuel-measure.md` §7 for how each
+exclusion is encoded (`pat_wf`, `ctor_sort`, the absence of a `major`-style eta
+rule). These are limitations of the current model, not of the route.
 
 ## 6. The open problem: the `const` case of `LR.adequacy`
 

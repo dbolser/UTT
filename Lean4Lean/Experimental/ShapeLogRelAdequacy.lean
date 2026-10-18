@@ -102,6 +102,48 @@ theorem LR.toValTy {m : WShape n'} {b : WShape n} (le_n : n ≤ n') (le_a : b.T 
   exact (LR Γ₀).toType <| (LR Γ₀).mono_r_1 hle hmem'
     (.mono_r hle .sort hmem') .sort H
 
+/-- Retype an `Adequate` fact from `(m', a')` down to `(m, a)` with `a` compatible with `a'`
+(port of the artifact's `LR.Adequate.mono_r`): up through the join by `mono_r_1`, across by
+`mono_l`, down by `mono_r_2`. Type validity at `a'` is an explicit hypothesis (`hAty'`), since
+this `LogRel` has no `isType` field. -/
+theorem LR.Adequate.mono_r {Γ₀ Γ : List SExpr} {ρ : Valuation} {M N A : SExpr}
+    {n n' : Nat} {m a : WShape n} {m' a' : WShape n'}
+    (le : m.T ≤ m'.T) (hmem : m.HasType a) (hmem' : m'.HasType a')
+    (hc : a.T.Compat a'.T)
+    (hAty : ∀ {{σ σ'}}, LR.SubstWF Γ₀ σ σ' Γ ρ → (LR Γ₀).TyDefEq (A.subst σ) (A.subst σ) a)
+    (hAty' : ∀ {{σ σ'}}, LR.SubstWF Γ₀ σ σ' Γ ρ → (LR Γ₀).TyDefEq (A.subst σ) (A.subst σ) a')
+    (H : Adequate Γ₀ Γ ρ M N A m' a') : Adequate Γ₀ Γ ρ M N A m a := by
+  have hJ := TShape.Join.mk hc
+  have ⟨hJ1, hJ2⟩ := (hJ _).1 .rfl
+  have hkn : n ≤ max n n' := Nat.le_max_left ..
+  have hkn' : n' ≤ max n n' := Nat.le_max_right ..
+  have hjk : (a.T.join a'.T).1 ≤ max n n' := Nat.max_le.2 ⟨hkn, hkn'⟩
+  have hJ1' := (TShape.LE.def hkn hjk).1 hJ1
+  have hJ2' := (TShape.LE.def hkn' hjk).1 hJ2
+  have hJ_t := (TShape.HasType.sort_r.2 hmem.isType).join' hJ (TShape.HasType.sort_r.2 hmem'.isType)
+  have hmem_k := (WShape.HasType.lift hkn).2 hmem
+  have hmem'_k := (WShape.HasType.lift hkn').2 hmem'
+  have hJ_t' := TShape.HasType.sort_r.1 <|
+    hJ_t.mono_l (TShape.lift_eqv hjk).2 (TShape.lift_eqv hjk).1
+  have lower : ∀ {M0 N0 : SExpr} {{σ σ'}} (W : LR.SubstWF Γ₀ σ σ' Γ ρ),
+      (LR Γ₀).DefEq M0 N0 (A.subst σ) m' a' → (LR Γ₀).DefEq M0 N0 (A.subst σ) m a := by
+    intro M0 N0 σ σ' W hv
+    have ha_kty : (WShape.lift (max n n') a).HasType .type := by
+      simpa using (WShape.HasType.lift hkn).2 hmem.isType
+    have ha'_kty : (WShape.lift (max n n') a').HasType .type := by
+      simpa using (WShape.HasType.lift hkn').2 hmem'.isType
+    have tyJ := (LR Γ₀).join_ty ((TShape.Compat.def hkn hkn').2 hc) ha_kty ha'_kty
+      ((TyDefEq.lift hkn hmem.isType).2 (hAty W))
+      ((TyDefEq.lift hkn' hmem'.isType).2 (hAty' W))
+    have tyJ' : (LR Γ₀).TyDefEq (A.subst σ) (A.subst σ) ((a.T.join a'.T).snd.lift (max n n')) :=
+      WShape.lift_self ▸ tyJ
+    refine (LR.DefEq.lift hkn hmem).1 <| (LR Γ₀).mono_r_2 hJ1' hmem_k hJ_t' <|
+      (LR Γ₀).mono_l ((TShape.LE.def hkn hkn').1 le) (.mono_r hJ1' hJ_t' hmem_k)
+        (.mono_r hJ2' hJ_t' hmem'_k) <|
+      (LR Γ₀).mono_r_1 hJ2' hmem'_k (.mono_r hJ2' hJ_t' hmem'_k) tyJ' <|
+        (LR.DefEq.lift hkn' hmem').2 hv
+  exact ⟨fun σ σ' W => ⟨lower W (H.1 W).1, lower W (H.1 W).2⟩, fun σ W => lower W (H.2 W)⟩
+
 /-- Main adequacy theorem for the logical relation. -/
 theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
     (hM : LE_Interp ρ m.T M) (hA : LE_Interp ρ a.T A) (hmem : m.HasType a) :
