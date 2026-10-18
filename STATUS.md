@@ -42,7 +42,7 @@ form the route:
 
 | file | lines | what it is |
 |---|---|---|
-| `SExpr.lean` | ~2700 | `SExpr`: the same syntax with universe levels quotiented semantically (`SLevel`). `SExpr.IsDefEq` is the same rule set **plus one rule** `trans'`: transitivity where the middle term may sit at a different sort. The `Params` class (§5) bundles the environment and the pattern data. Lines ~1033–2100 are this fork's port of `Theory/Typing/Strong.lean` (`IsDefEqStrong`, `Ctx.WF`, `CtxStrong`, `EnvStrongS`, `IsDefEq.strong`). `IsDefEq.mkS` (line ~890) translates `VEnv.IsDefEq` into `SExpr.IsDefEq`. |
+| `SExpr.lean` | ~3000 | `SExpr`: the same syntax with universe levels quotiented semantically (`SLevel`). `SExpr.IsDefEq` is the same rule set **plus one rule** `trans'`: transitivity where the middle term may sit at a different sort. The `Params` class (§5) bundles the environment and the pattern data. Lines ~1046–2115 are this fork's port of `Theory/Typing/Strong.lean` (`IsDefEqStrong`, `Ctx.WF`, `CtxStrong`, `EnvStrongS`, `IsDefEq.strong`). `IsDefEq.mkS` (line ~903) translates `VEnv.IsDefEq` into `SExpr.IsDefEq`. |
 | `ShapeLogRel.lean` | ~6100 | A finitary domain model ("shapes", `WShape`), the interpretation of terms into it (`LE_Interp`, line ~3333), and a logical relation over it (`LogRel`, `LRS.DefEq`, `LRS.TyDefEq`). This is the Lean form of [*Definitional Inversion, Without Normalisation*](https://arxiv.org/abs/2607.13662) (Carneiro, Coquand, Frabetti Mathieu, Lennon-Bertrand, Melliès, Weirich, 2026), extended with constants, constructor shapes and pattern rules. No normalisation is used anywhere; Lean's theory is not normalising. |
 | `ShapeLogRelAdequacy.lean` | ~470 | The fundamental lemma `LR.adequacy`, and from it Pi-injectivity `forallE_inv`, sort injectivity `sort_inv` and sort/Pi disjointness `sort_forallE_inv`, all for the `trans'` system. |
 | `UniqueTyping.lean` | ~390 | Unique typing for the `trans'` system by plain induction (`HasTypeS.uniq`); `uniq_sort`; `IsDefEq.iff_isDefEq'`, showing `trans'` is admissible, so the `trans'` system equals `IsDefEq'`, which has exactly Lean's rules; the final corollary; and reflection of sort injectivity and sort/Pi disjointness back to `VExpr`. |
@@ -113,9 +113,9 @@ green too. The tracer is not yet a pass/fail CI check (a good first task, §8).
   `IsDefEq.strong : Γ ⊢ e1 ≡ e2 : A → IsDefEqStrong Γ e1 e2 A` is false
   without a well-formed context: `[bvar 5] ⊢ bvar 0 : bvar 6` holds in the
   weak system and has no strong derivation (`IsDefEq.strong_counterexample`,
-  `SExpr.lean` ~1451). The fix threads `⊢ Γ` (`Ctx.WF`, ~1172) through the
-  whole chain; internally `CtxStrong` (~1458) is the strong form built from it
-  via `Params.envStrongS` (~1933), and `IsDefEq.strongS` (~1754) is the actual
+  `SExpr.lean` ~1464). The fix threads `⊢ Γ` (`Ctx.WF`, ~1185) through the
+  whole chain; internally `CtxStrong` (~1471) is the strong form built from it
+  via `Params.envStrongS` (~1946), and `IsDefEq.strongS` (~1767) is the actual
   induction (`30996fa`, `cd97547`).
 - `WHRed.determ` is proven, from `pat_simple` and `pat_uniq` alone (`e8c6bd8`).
 - The axiom `Params.extra_pat` and the sorried `Params.ctor_ty` are now
@@ -137,11 +137,17 @@ green too. The tracer is not yet a pass/fail CI check (a good first task, §8).
   `WHRedS.weakU_inv` now take an explicit defeq-transport hypothesis, because
   their `extra` cases were sorried upstream; the off-path `InferType` lemmas
   keep named, documented sorries for it.
+- The syntactic spine lemmas of the ctor-clause plan (§6): `spine`, `headE`,
+  `args`, `spine_inj`, `Pattern.head`, `Pattern.WF.head_symb`,
+  `Pattern.MatchesS.headE`/`head_eq`/`not_symb`, `WHNF.of_headE`,
+  `WHNF.ctorSpine`, `WHNF.indTySpine`, `WHRedS.ctorSpine_eq`,
+  `WHRedS.ctorSpine_determ`. Pure syntax, no new `Params` fields.
 
 ## 5. What is assumed: the `Params` class
 
-`SExpr.Params` (`SExpr.lean`, top) is a hypothesis package, not an axiom. No
-instance exists in the repo yet. Its fields:
+`SExpr.Params` (`SExpr.lean`, top) is a hypothesis package, not an axiom. Two
+instances live in `docs/params/` (experiments, not part of the build; see its
+`README.md`). Its fields:
 
 - `env`, `henv : env.Ordered`, `univs`: the environment and ambient universe count.
 - `Pat`, `classify`, `pat_simple`, `pat_wf`, `pat_uniq`: every rewrite rule is
@@ -151,6 +157,14 @@ instance exists in the repo yet. Its fields:
   pattern, with its side conditions holding.
 - `ctor_syn`, `ctor_sort`: constructor types are syntactically a Π-telescope
   over the inductive type, at a sort that is never `Prop`.
+
+`extra_patV` as stated is unsatisfiable for any `Ordered` environment whose
+rules are lambda-wrapped schemas, which is Lean4Lean's own `vdefeq` convention
+(`docs/params/NatParams.lean`: `extra_patV_false_envA`; the open-`bvar`
+alternative is not `VDefEq.WF`, `iotaZeroOpen_not_wf`). It holds vacuously for
+rule-free environments (`docs/params/EmptyParams.lean`;
+`docs/params/NatParams.lean`, `natParams` over the constants-only `ℕ`
+environment). Reformulating it is an open item (§8).
 
 Building a `Params` instance for the environments Lean4Lean actually produces
 depends on the inductive-type specification in `Theory/Inductive.lean`, which
@@ -251,14 +265,11 @@ Good first tasks:
 - Turn `scripts/TraceSorry.lean` into a pass/fail check (expected sorry set
   for `IsDefEq'.uniq` is exactly `{LR.adequacy}`, no axioms beyond the three
   standard ones) and add it to CI on this fork.
-- Build an empty-environment `Params` instance in a scratch file
-  (`env := .empty`, `Pat := fun _ _ => False`, `classify := fun _ => none`;
-  `henv : env.Ordered` is the only non-vacuous field), to show the hypothesis
-  package is satisfiable; then an environment with `ℕ`.
-- The syntactic spine lemmas of the ctor-clause plan (`WHNF.ctorSpine`,
-  `WHNF.indTySpine`, spine injectivity), building on `spine` in
-  `CtorClause.lean` and `WHNF.pat_app_l` in `SExpr.lean`: pure syntax, no
-  logical relation, and they unblock the clause.
+- Reformulate `extra_patV` so lambda-wrapped iota rules are pattern instances
+  (strip binders, or state it on the beta-applied form) and re-derive
+  `Params.extra_pat` (`SExpr.lean` ~1006) and its model-side uses.
+- `ctor_sort` for `ℕ` (`docs/params/NatParams.lean`, `ctor_sort_nat`) needs
+  `IsDefEqU.sort_inv` (`Theory/Typing/Injectivity.lean`); currently `sorry`.
 - Prove `WHRedS.defeq` in `SExpr.lean` (head reduction is a definitional
   equality at the term's type), which §6 needs.
 
