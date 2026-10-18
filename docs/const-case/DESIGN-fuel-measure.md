@@ -57,13 +57,13 @@ the RHS instance at `(m, a)`.
 
 Two independent facts, both checked in Lean against the snapshot:
 
-* **Stuck.lean** (`WHNF.rec_bvar`, `WHNF.rec_symb_major`): the SExpr `WHRed` (SExpr.lean:
-  1011) has only `app`, `beta`, `extra`, and `extra` needs a *syntactic* `MatchesS`. Using
-  only `pat_simple` and `pat_wf`, if `classify rec = symb (n+1)` then
-  `rec a₁ … aₙ (bvar i)` and `rec a₁ … aₙ (g T X)` (any `g` classified `symb`, e.g. `id`)
-  are in WHNF. The VExpr-level `WHRed` (Theory/Typing/HeadReduction.lean:59-64) has a
-  `major` rule; the SExpr one was simplified and lost it. Even with `major`, `bvar i` stays
-  stuck.
+* **Stuck.lean** (`WHNF.rec_bvar`): `extra` needs a *syntactic* `MatchesS`, so using only
+  `pat_simple` and `pat_wf`, if `classify rec = symb (n+1)` then `rec a₁ … aₙ (bvar i)` is
+  in WHNF. When this note was written the SExpr `WHRed` had only `app`, `beta`, `extra`, and
+  `rec a₁ … aₙ (g T X)` (any `g` classified `symb`, e.g. `id`) was stuck as well
+  (`WHNF.rec_symb_major`, since deleted). The `major` rule of the VExpr-level `WHRed`
+  (Theory/Typing/HeadReduction.lean:59-64) has since been added to the SExpr one (b2516c4),
+  which unsticks that case; `bvar i` stays stuck.
 * **Subst1.lean** (`LR.SubstWF.push_any_at_ctor`): with the current LR, `LR.Subst1`
   (ShapeLogRel.lean:6061) accepts *any* `x : N` (`N` classified `indTy 0`) at *any* shape
   `xs : indTy`, in particular `x := bvar j` at `xs := ctor' succ [ctor' zero []]`. Reason:

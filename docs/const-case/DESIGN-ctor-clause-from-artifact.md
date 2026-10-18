@@ -90,7 +90,7 @@ Mirror of the artifact's nat alternatives (`LogRel.lean:1096-1560`). Shape-level
 | `toType` | `id` (sort clause unchanged). |
 | `left`, `left_ty` | `CtorDefEq.left` (proved); `TyDefEq.left` at indTy: `⟨h.1, h.1⟩`. |
 | `symm`, `symm_ty` | `CtorDefEq.symm` (proved: `IH.symm`, `IH.conv` with the stored type congruence, `IsDefEq.defeqDF`); `TyDefEq.symm` at indTy: swap. |
-| `trans`, `trans_ty` | `CtorDefEq.trans` (proved modulo `WHNF.ctorSpine` + spine injectivity: `spine (const c ls) Ys = spine (const c ls') Ys' → ls = ls' ∧ Ys = Ys'`, a 5-line `foldl` injectivity by induction on `Ys`); `CtorArgsEq.trans` proved. |
+| `trans`, `trans_ty` | `CtorDefEq.trans` (proved modulo telescope uniqueness `Ts = Ts'`: the two Π-telescopes read off `ci.type` must coincide, to be pinned via `ctor_syn`; `WHNF.ctorSpine` and the spine injectivity `WHRedS.ctorSpine_determ` are now in SExpr.lean); `CtorArgsEq.trans` proved. |
 | `trans'` | at `s = indTy, a = ctor`: first hypothesis has `IndTyRed Γ (sort u)`; `WHNF.sort.whRedS` gives `sort u = spine …`, `cases`. At `a = bot`: `True`. |
 | `conv` | `(ctor, indTy)`: `TyDefEq A B indTy = IndTyRed A ∧ IndTyRed B` replaces the `IndTyRed A` component; the `∃` part is untouched (it mentions `A` only through `IndTyRed`). |
 | `mono_r_2` | `a ≤ a' = indTy` ⇒ `a ∈ {bot, indTy}` (`le_indTy`); `bot`: `True`; `indTy`: `id`. |

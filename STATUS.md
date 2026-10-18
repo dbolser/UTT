@@ -158,12 +158,14 @@ instances live in `docs/params/` (experiments, not part of the build; see its
 - `ctor_syn`, `ctor_sort`: constructor types are syntactically a Π-telescope
   over the inductive type, at a sort that is never `Prop`.
 
-`extra_patV` as stated is unsatisfiable for any `Ordered` environment whose
-rules are lambda-wrapped schemas, which is Lean4Lean's own `vdefeq` convention
-(`docs/params/NatParams.lean`: `extra_patV_false_envA`; the open-`bvar`
-alternative is not `VDefEq.WF`, `iotaZeroOpen_not_wf`). It holds vacuously for
-rule-free environments (`docs/params/EmptyParams.lean`;
-`docs/params/NatParams.lean`, `natParams` over the constants-only `ℕ`
+`extra_patV` as stated does not fit schematic rules. For the `ℕ` environment
+with its two iota rules lambda-wrapped (Lean4Lean's own `vdefeq` convention) it
+is false for every choice of `Pat`, because `Pattern.Matches` has no `lam` case
+(`docs/params/NatParams.lean`: `extra_patV_false_envA`); that this environment
+is `Ordered` rests on two routine typing sorries there. The open-`bvar`
+encoding is pattern-matchable but not `VDefEq.WF` (`iotaZeroOpen_not_wf`). So
+far the field holds only for rule-free environments
+(`docs/params/EmptyParams.lean`; `natParams` over the constants-only `ℕ`
 environment). Reformulating it is an open item (§8).
 
 Building a `Params` instance for the environments Lean4Lean actually produces
