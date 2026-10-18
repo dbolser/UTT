@@ -14,11 +14,6 @@ def _root_.Lean4Lean.Pattern.RHS.fixedLeaves {p : Pattern} : p.RHS → List VExp
   | .var _ => []
   | .app f a => f.fixedLeaves ++ a.fixedLeaves
 
-def _root_.Lean4Lean.Pattern.head : Pattern → Name
-  | .const c => c
-  | .app f _ => f.head
-  | .var f => f.head
-
 /-- A block relation on constants (e.g. mutual recursors); only its decidability matters here. -/
 def SameBlock (Block : Name → Name → Prop) (c : Name) : VExpr → Prop
   | .const c' _ => Block c c'

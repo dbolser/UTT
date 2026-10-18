@@ -7,9 +7,6 @@ Port of the artifact's `LRS.TmEq` nat-clauses / `TmEqNat` to lean4lean's
 namespace Lean4Lean.SExpr
 variable [Params]
 
-/-- `h X₁ … Xₖ` in spine order. -/
-def spine (h : SExpr) (Xs : List SExpr) : SExpr := Xs.foldl .app h
-
 /-- Port of the artifact's `Γ ⊢ A ⤳* nat` component: the type weak-head reduces to an
 inductive-type spine.  Needed to make `trans'` vacuous at `s = indTy`. -/
 def LRS.IndTyRed (Γ : List SExpr) (A : SExpr) : Prop :=
@@ -70,12 +67,6 @@ theorem LRS.CtorDefEq.symm {IH : LogRel Γ n} :
     CtorDefEq IH M N A c l → CtorDefEq IH N M A c l
   | ⟨hA, ls, Xs, Ys, Ts, B, hc, hM, hN, h⟩ => ⟨hA, ls, Ys, Xs, Ts, B, hc, hN, hM, h.symm⟩
 
-/-- A constructor spine is weak-head normal: no `beta` (head is a `const`), no `extra`
-(pattern heads are `symb`, see `pat_arity`), and `app` needs a reducible prefix spine.
-Needed for `trans` (determinism) and for the pat leaf (syntactic `MatchesS`). -/
-theorem WHNF.ctorSpine (hc : Params.classify c = some (.ctor k)) (Xs : List SExpr) :
-    WHNF Γ (spine (.const c ls) Xs) := sorry
-
 theorem LRS.CtorArgsEq.trans {IH : LogRel Γ n} :
     CtorArgsEq IH Ts Xs Ys l ρ σ σ' → CtorArgsEq IH Ts Ys Zs l ρ σ' σ'' →
     CtorArgsEq IH Ts Xs Zs l ρ σ σ'' := by
@@ -92,10 +83,14 @@ theorem LRS.CtorArgsEq.trans {IH : LogRel Γ n} :
 
 theorem LRS.CtorDefEq.trans {IH : LogRel Γ n} (hc : Params.classify c = some (.ctor k)) :
     CtorDefEq IH M₁ M₂ A c l → CtorDefEq IH M₂ M₃ A c l → CtorDefEq IH M₁ M₃ A c l
-  | ⟨hA, ls, Xs, Ys, Ts, B, hc', hM₁, hM₂, h⟩, ⟨_, ls', Ys', Zs, _, _, _, hM₂', hM₃, h'⟩ => by
-    have := hM₂.determ (WHNF.ctorSpine hc Ys) hM₂' (WHNF.ctorSpine hc Ys')
-    sorry  -- spine injectivity: `spine (const c ls) Ys = spine (const c ls') Ys'` ⇒ `ls = ls' ∧ Ys = Ys'`,
-           -- then `⟨hA, ls, Xs, Zs, Ts, B, hc', hM₁, hM₃, h.trans h'⟩`.
+  | ⟨hA, ls, Xs, Ys, Ts, B, hc', hM₁, hM₂, h⟩, ⟨_, ls', Ys', Zs, Ts', _, _, hM₂', hM₃, h'⟩ => by
+    -- spine injectivity: `WHRedS.ctorSpine_determ` (SExpr.lean) gives `ls = ls'` and `Ys = Ys'`
+    obtain ⟨rfl, rfl⟩ := WHRedS.ctorSpine_determ hc hM₂ hM₂'
+    -- telescope uniqueness: the clause's `∃ Ts B, Γ ⊢ const c ls : Ts.foldr forallE B` does not
+    -- pin `Ts`, so the two witnesses need not agree syntactically.  Fix `Ts` from `ctor_syn`
+    -- (the constructor's telescope is syntactic) when the clause is finalised.
+    obtain rfl : Ts = Ts' := sorry
+    exact ⟨hA, ls, Xs, Zs, Ts, B, hc', hM₁, hM₃, h.trans h'⟩
 
 /-! ### The spine-generalised `const` statement (mirrors `LR.adequacy_Y`).
 

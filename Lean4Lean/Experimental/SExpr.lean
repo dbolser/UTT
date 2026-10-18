@@ -21,6 +21,19 @@ def Pattern.WF (cl : Name → Option Classification) :
   | .var p, top, n => WF cl p top (n + 1)
   | .app p p', top, n => WF cl p top (n + 1) ∧ WF cl p' false
 
+/-- The head constant of a pattern. -/
+def Pattern.head : Pattern → Name
+  | .const c => c
+  | .app f _ => f.head
+  | .var f => f.head
+
+/-- The head of a top-level well-formed pattern is classified `symb`. -/
+theorem Pattern.WF.head_symb {cl : Name → Option Classification} :
+    ∀ (p : Pattern) {n}, p.WF cl true n → ∃ k, cl p.head = some (.symb k)
+  | .const _, _, h => ⟨_, h⟩
+  | .var f, _, h => Pattern.WF.head_symb f h
+  | .app f _, _, h => Pattern.WF.head_symb f h.1
+
 class Params where
   env : VEnv
   henv : env.Ordered
@@ -2269,6 +2282,73 @@ theorem Params.simple_app (H : Pat p r) (h : Subpattern (.app p₁ p₂) p) : .a
   · obtain ⟨n, h⟩ := Subpattern.varN_const ‹_›; cases n <;> cases h
   · obtain ⟨n, h⟩ := Subpattern.varN_const ‹_›; cases n <;> cases h
 
+/-! ### Spines -/
+
+/-- `h X₁ … Xₖ` in spine order. -/
+def spine (h : SExpr) (Xs : List SExpr) : SExpr := Xs.foldl .app h
+
+@[simp] theorem spine_nil : spine h [] = h := rfl
+@[simp] theorem spine_cons : spine h (X :: Xs) = spine (.app h X) Xs := rfl
+theorem spine_append : spine h (Xs ++ Ys) = spine (spine h Xs) Ys := List.foldl_append
+@[simp] theorem spine_snoc : spine h (Xs ++ [X]) = .app (spine h Xs) X := spine_append
+
+theorem spine_eq_app (hne : Xs ≠ []) :
+    spine h Xs = .app (spine h Xs.dropLast) (Xs.getLast hne) := by
+  rw [← spine_snoc, List.dropLast_concat_getLast]
+
+/-- Head of an application spine. -/
+def headE : SExpr → SExpr
+  | .app f _ => headE f
+  | e => e
+
+/-- Arguments of an application spine, in spine order. -/
+def args : SExpr → List SExpr
+  | .app f a => args f ++ [a]
+  | _ => []
+
+@[simp] theorem headE_app : headE (.app f a) = headE f := rfl
+@[simp] theorem headE_const : headE (.const c ls) = .const c ls := rfl
+@[simp] theorem args_app : args (.app f a) = args f ++ [a] := rfl
+@[simp] theorem args_const : args (.const c ls) = [] := rfl
+
+theorem headE_spine : ∀ (Xs : List SExpr) (h), headE (spine h Xs) = headE h
+  | [], _ => rfl
+  | X :: Xs, h => headE_spine Xs (.app h X)
+
+theorem args_spine : ∀ (Xs : List SExpr) (h), args (spine h Xs) = args h ++ Xs
+  | [], _ => by simp
+  | X :: Xs, h => by simp [args_spine Xs (.app h X)]
+
+/-- `spine (const c ls) Xs` is injective in `c`, `ls` and `Xs`. -/
+theorem spine_inj {c c' : Name} {ls ls' : List SLevel} {Xs Xs' : List SExpr}
+    (H : spine (.const c ls) Xs = spine (.const c' ls') Xs') : c = c' ∧ ls = ls' ∧ Xs = Xs' := by
+  have h1 := congrArg headE H; have h2 := congrArg args H
+  simp only [headE_spine, headE_const, args_spine, args_const, List.nil_append] at h1 h2
+  cases h1; exact ⟨rfl, rfl, h2⟩
+
+/-! ### Pattern heads -/
+
+/-- A term matching a pattern is a spine headed by the pattern's head constant. -/
+theorem _root_.Lean4Lean.Pattern.MatchesS.headE {p : Pattern} {e : SExpr} {m1 m2}
+    (H : p.MatchesS e m1 m2) : ∃ ls, headE e = .const p.head ls := by
+  induction H with
+  | const => exact ⟨_, rfl⟩
+  | var _ ih | app _ _ ih _ => exact ih
+
+theorem _root_.Lean4Lean.Pattern.MatchesS.head_eq {p : Pattern} {e : SExpr} {m1 m2}
+    (H : p.MatchesS e m1 m2) (he : headE e = .const c ls) : p.head = c := by
+  obtain ⟨_, h⟩ := H.headE; cases he.symm.trans h; rfl
+
+theorem Params.Pat.head_symb (h : Pat p r) : ∃ k, classify p.head = some (.symb k) :=
+  Pattern.WF.head_symb p (pat_wf h)
+
+/-- No rule matches a spine whose head constant is not classified `symb`. -/
+theorem _root_.Lean4Lean.Pattern.MatchesS.not_symb {p : Pattern} {e : SExpr} {m1 m2}
+    (h2 : p.MatchesS e m1 m2) (hc : ∀ k, classify c ≠ some (.symb k))
+    (hp : ∃ k, classify p.head = some (.symb k)) (he : headE e = .const c ls) : False :=
+  have ⟨_, h⟩ := hp
+  hc _ (h2.head_eq he ▸ h)
+
 theorem _root_.Lean4Lean.Pattern.matchesS_lift' {p : Pattern} {e : SExpr} {m1 m2'} :
     p.MatchesS (e.lift' ρ) m1 m2' ↔
     ∃ m2, p.MatchesS e m1 m2 ∧ ∀ x, m2' x = (m2 x).lift' ρ := by
@@ -2507,6 +2587,35 @@ theorem WHNF.pat_app_r (h1 : Pat p r) (h2 : p.MatchesS (.app f a) m1 m2) : WHNF 
     exact WHNF.subpattern h1 (.appR .refl) Pattern.ne_app_self_r h3
   · nomatch h2
 
+/-- A spine headed by a constant that is not classified `symb` is weak-head normal: `beta`
+needs a `lam` head, `extra` a `symb`-classified pattern head (`pat_wf`), `major` a
+`symb`-classified rule-prefix head, and `app` a reducible prefix spine. -/
+theorem WHNF.of_headE (hc : ∀ k, classify c ≠ some (.symb k)) :
+    ∀ {e : SExpr} {ls}, headE e = .const c ls → WHNF Γ e
+  | .bvar _, _, h | .sort _, _, h | .lam .., _, h | .forallE .., _, h => by cases h
+  | .const _ _, _, he => fun _ H => by
+    cases H with
+    | extra h1 h2 => exact h2.not_symb hc (Params.Pat.head_symb h1) he
+  | .app f a, ls, he => fun _ H => by
+    cases H with
+    | app H' => exact WHNF.of_headE hc (e := f) he _ H'
+    | major hm _ =>
+      obtain ⟨p, ⟨_, h1⟩, p₁, p₂, h2, _, _, h3⟩ := hm
+      cases Params.simple_app h1 h2
+      exact h3.not_symb hc (Params.Pat.head_symb (p := .app p₁ p₂) h1) he
+    | beta => cases he
+    | extra h1 h2 => exact h2.not_symb hc (Params.Pat.head_symb h1) he
+
+/-- A constructor spine is weak-head normal. -/
+theorem WHNF.ctorSpine (hc : classify c = some (.ctor k)) (Xs : List SExpr) :
+    WHNF Γ (spine (.const c ls) Xs) :=
+  WHNF.of_headE (fun _ h => by cases hc.symm.trans h) (headE_spine _ _)
+
+/-- An inductive-type spine is weak-head normal. -/
+theorem WHNF.indTySpine (hc : classify I = some (.indTy k)) (Xs : List SExpr) :
+    WHNF Γ (spine (.const I ls) Xs) :=
+  WHNF.of_headE (fun _ h => by cases hc.symm.trans h) (headE_spine _ _)
+
 theorem WHRed.determ (H1 : Γ ⊢ e ⤳ e₁) (H2 : Γ ⊢ e ⤳ e₂) : e₁ = e₂ := by
   induction H1 generalizing e₂ with
   | app l1 ih =>
@@ -2598,6 +2707,16 @@ theorem WHNF.whRedS (W : WHNF Γ e) (H : Γ ⊢ e ⤳* e') : e = e' := by
 theorem WHRedS.determ
     (H1 : Γ ⊢ e ⤳* e₁) (W1 : WHNF Γ e₁)
     (H2 : Γ ⊢ e ⤳* e₂) (W2 : WHNF Γ e₂) : e₁ = e₂ := W1.whRedS (H1.determ_l H2 W2)
+
+theorem WHRedS.ctorSpine_eq (hc : classify c = some (.ctor k))
+    (H : Γ ⊢ spine (.const c ls) Xs ⤳* e) : e = spine (.const c ls) Xs :=
+  ((WHNF.ctorSpine hc Xs).whRedS H).symm
+
+/-- Two constructor spines reached from the same term agree (determinism + spine injectivity). -/
+theorem WHRedS.ctorSpine_determ (hc : classify c = some (.ctor k))
+    (H1 : Γ ⊢ M ⤳* spine (.const c ls) Xs) (H2 : Γ ⊢ M ⤳* spine (.const c ls') Xs') :
+    ls = ls' ∧ Xs = Xs' :=
+  (spine_inj (H1.determ (WHNF.ctorSpine hc Xs) H2 (WHNF.ctorSpine hc Xs'))).2
 
 scoped notation:65 Γ " ⊢ " e1 " ≫ " e2:36 => ParRed Γ e1 e2
 inductive ParRed : List SExpr → SExpr → SExpr → Prop where
