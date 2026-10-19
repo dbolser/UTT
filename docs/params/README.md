@@ -3,7 +3,7 @@
 `SExpr.Params` (`Lean4Lean/Experimental/SExpr.lean`, top) is the hypothesis
 package the route assumes (`STATUS.md` §5). These files show what it takes to
 inhabit it. They are experiments, not part of the build; `./check.sh`
-typechecks both against the current tree.
+typechecks them against the current tree.
 
 - `EmptyParams.lean`: `emptyParams`, an instance for `VEnv.empty`. Every field
   is vacuous or `rfl`; no `sorry`. Shows the package is satisfiable.
@@ -16,6 +16,9 @@ typechecks both against the current tree.
   `iotaSuccLam_wf` (routine typing of the lambda-wrapped rules, only used by
   `envA_ordered`), and `ctor_sort_nat` (blocked on the repo's own sorried
   `IsDefEqU.sort_inv`, `Theory/Typing/Injectivity.lean`).
+- `Schema.lean`: `Pattern.Matches.not_lam` and `Params.no_lam_rule`: no `Params`
+  environment contains a rule whose left-hand side is a lambda. This is the
+  finding below made precise, in two lemmas; no `sorry`.
 
 ## Finding: `extra_patV` as stated does not fit schematic rules
 
@@ -37,5 +40,13 @@ So `extra_patV` holds only vacuously, for rule-free environments (`emptyParams`;
 `Pat ⊆ env.defeqs`, so `Pat` may still carry the schematic patterns.
 
 **Open item:** reformulate `extra_patV` so lambda-wrapped iota rules are
-pattern instances (strip the binders, or state it on the beta-applied form),
-and re-derive `SExpr.Params.extra_pat` and its model-side uses.
+pattern instances, and re-derive `SExpr.Params.extra_pat` and its model-side
+uses. The plan (`docs/const-case/PLAN.md`, D5) restates it on the λ-telescope:
+`df.lhs = Δ.foldr .lam L`, `df.rhs = Δ.foldr .lam R`, `L` a pattern instance,
+together with the rule's *open typed equation* `Δ.reverse ⊢ L ≡ R : T` (the
+plan's audit found that the typed beta steps need the body typed at the
+declared codomain, and nothing else supplies that without Pi-injectivity). With
+`Δ = []` it is today's field. The plan also adds `pat_defeq` (every `Pat` rule
+is a definitional equality of `env`), which the current `natParams` violates
+(`env := envC` has no rules), so the ℕ instance moves to `envA`; its two
+routine typing sorries are exactly the open typed equations of the two rules.

@@ -44,7 +44,7 @@ form the route:
 |---|---|---|
 | `SExpr.lean` | ~3000 | `SExpr`: the same syntax with universe levels quotiented semantically (`SLevel`). `SExpr.IsDefEq` is the same rule set **plus one rule** `trans'`: transitivity where the middle term may sit at a different sort. The `Params` class (§5) bundles the environment and the pattern data. Lines ~1046–2115 are this fork's port of `Theory/Typing/Strong.lean` (`IsDefEqStrong`, `Ctx.WF`, `CtxStrong`, `EnvStrongS`, `IsDefEq.strong`). `IsDefEq.mkS` (line ~903) translates `VEnv.IsDefEq` into `SExpr.IsDefEq`. |
 | `ShapeLogRel.lean` | ~6100 | A finitary domain model ("shapes", `WShape`), the interpretation of terms into it (`LE_Interp`, line ~3333), and a logical relation over it (`LogRel`, `LRS.DefEq`, `LRS.TyDefEq`). This is the Lean form of [*Definitional Inversion, Without Normalisation*](https://arxiv.org/abs/2607.13662) (Carneiro, Coquand, Frabetti Mathieu, Lennon-Bertrand, Melliès, Weirich, 2026), extended with constants, constructor shapes and pattern rules. No normalisation is used anywhere; Lean's theory is not normalising. |
-| `ShapeLogRelAdequacy.lean` | ~470 | The fundamental lemma `LR.adequacy`, and from it Pi-injectivity `forallE_inv`, sort injectivity `sort_inv` and sort/Pi disjointness `sort_forallE_inv`, all for the `trans'` system. |
+| `ShapeLogRelAdequacy.lean` | ~515 | The fundamental lemma `LR.adequacy`, and from it Pi-injectivity `forallE_inv`, sort injectivity `sort_inv` and sort/Pi disjointness `sort_forallE_inv`, all for the `trans'` system. |
 | `UniqueTyping.lean` | ~390 | Unique typing for the `trans'` system by plain induction (`HasTypeS.uniq`); `uniq_sort`; `IsDefEq.iff_isDefEq'`, showing `trans'` is admissible, so the `trans'` system equals `IsDefEq'`, which has exactly Lean's rules; the final corollary; and reflection of sort injectivity and sort/Pi disjointness back to `VExpr`. |
 
 The final theorem, for `SExpr` and under a well-formed context, exactly as
@@ -97,7 +97,8 @@ case of the fundamental lemma (§6). The environment-side theorems
 `grep sorry` finds about twenty more sorried lemmas in `SExpr.lean` and
 `ShapeLogRel.lean` inherited from upstream and off the path (for example
 `WHRed.subst`, `WHRedS.defeq`, `InferType.hasType`, `Shape.WF.plift`).
-`WHRedS.defeq` is one the plan in §6 will need.
+The plan in §6 is built not to need `WHRedS.defeq` (subject reduction): it
+puts typed reductions into the relation and the typing of rules into `Params`.
 
 Upstream CI (`.github/workflows/ci.yml`) builds the whole `Experimental`
 library, all sixteen modules, so keep `lake build Lean4Lean.Experimental`
@@ -142,6 +143,9 @@ green too. The tracer is not yet a pass/fail CI check (a good first task, §8).
   `Pattern.MatchesS.headE`/`head_eq`/`not_symb`, `WHNF.of_headE`,
   `WHNF.ctorSpine`, `WHNF.indTySpine`, `WHRedS.ctorSpine_eq`,
   `WHRedS.ctorSpine_determ`. Pure syntax, no new `Params` fields.
+- `LR.Adequate.mono_r` (`ShapeLogRelAdequacy.lean`): retype an `Adequate` fact
+  down to a compatible shape, a port of the artifact's lemma that every
+  const-case design uses (`3c35f59`).
 
 ## 5. What is assumed: the `Params` class
 
@@ -166,7 +170,9 @@ is `Ordered` rests on two routine typing sorries there. The open-`bvar`
 encoding is pattern-matchable but not `VDefEq.WF` (`iotaZeroOpen_not_wf`). So
 far the field holds only for rule-free environments
 (`docs/params/EmptyParams.lean`; `natParams` over the constants-only `ℕ`
-environment). Reformulating it is an open item (§8).
+environment). The plan's restatement, on λ-telescopes with the rule's open
+typed equation, is D5 of `docs/const-case/PLAN.md`; `docs/params/README.md`
+has the details.
 
 Building a `Params` instance for the environments Lean4Lean actually produces
 depends on the inductive-type specification in `Theory/Inductive.lean`, which
@@ -181,13 +187,14 @@ rule). These are limitations of the current model, not of the route.
 
 ## 6. The open problem: the `const` case of `LR.adequacy`
 
-`LR.adequacy` (`ShapeLogRelAdequacy.lean`, line ~106; the sorry is in the
-`const` case near line 150) is proven by induction on the strong derivation;
+`LR.adequacy` (`ShapeLogRelAdequacy.lean`, line ~148; the sorry is in the
+`const` case near line 196) is proven by induction on the strong derivation;
 13 of its 14 cases are done. The `const` case has been a sorry since the
-model started interpreting constants non-trivially (April 2026). Two
-independent analyses on this fork reached the same conclusions; the write-ups
-and the experiments backing them are in `docs/const-case/` (`./check.sh`
-typechecks the experiments).
+model started interpreting constants non-trivially (April 2026). Three
+independent design analyses on this fork, a five-lens adversarial review of
+them, and a merged, audited plan are in `docs/const-case/`; start with
+`docs/const-case/PLAN.md`. `./check.sh` there typechecks every experiment
+against the current tree.
 
 **It is a design gap, not a proof gap.** The logical relation is `True` at
 inductive type-shapes: `LRS.DefEq` (`ShapeLogRel.lean` ~5619) has
@@ -199,41 +206,83 @@ happen. With the relation unchanged the lemma is false, not merely unproven
 (`Stuck.lean`, `Subst1.lean`, and §2 of `DESIGN-fuel-measure.md`). Both
 `True` clauses have to change.
 
-**What has to change.**
+**What has to change** (the plan's decisions; Lean statements, evidence and
+the ordered work items are in `PLAN.md`).
 
-1. A constructor clause in `LRS.DefEq` at `(m = ctor c l, a = indTy)`: both
-   terms head-reduce to `c` applied to a spine whose arguments are related at
-   the shapes in `l`. This is the paper's treatment of `ℕ` (clauses for `zero`
-   and `succ`). The paper's Lean mechanisation, supplementary material at
-   [anonymous.4open.science/r/domain-semantics-lean-BEE7](https://anonymous.4open.science/r/domain-semantics-lean-BEE7),
-   has it worked out for `ℕ`, `Σ`, unit, `Id`, `Prop` and a fixpoint
-   combinator, including the re-proofs of every logical-relation field; its
-   umbrella file pins the axiom lists of `HasType.uniq`, `IsDefEq.iff` and
-   eight more headline theorems with `#guard_msgs` (we read it; we did not
-   rebuild it). The port to arbitrary inductives is designed in
-   `DESIGN-ctor-clause-from-artifact.md`; the clause and its `left`/`symm`
-   lemmas typecheck (`CtorClause.lean`).
-2. A `major` rule in `SExpr`'s `WHRed` (reduction in major-premise position).
-   `Theory/Typing/HeadReduction.lean` has it; the `SExpr` version dropped it.
-   Without it a recursor whose argument merely *reduces* to a constructor can
-   never fire. Done (`b2516c4`): `WHRed.major`, `IsMajorPremise`,
-   `WHRedS.major`, and `WHRed.determ` re-proven with the new case.
-3. A termination measure for rule right-hand sides, which are not
-   subderivations. Taken from the mechanisation's fixpoint case: keep the
-   outer induction on the derivation and, inside the `const` case only, induct
-   on the *interpretation* derivation `hM : LE_Interp ρ m (const c ls)`. Its
-   `R` premise makes every unfolding a strict subderivation, even for
-   recursors that occur in their own right-hand sides. Closed leaves of a rule
-   outside the same recursive block need typing premises on
-   `IsDefEqStrong.const` and matching `Params` fields. See §3–4 of
-   `DESIGN-fuel-measure.md`.
+1. **A constructor clause** in `LRS.DefEq` at `(m = ctor c l, a = indTy)`:
+   both terms head-reduce, *with a typed equation*, to `c` applied to a spine
+   whose fields are related at the shapes in `l`. This is the paper's
+   treatment of `ℕ`; its Lean mechanisation (supplementary material at
+   [anonymous.4open.science/r/domain-semantics-lean-BEE7](https://anonymous.4open.science/r/domain-semantics-lean-BEE7))
+   has it for `ℕ`, `Σ`, unit, `Id`, `Prop` and a fixpoint combinator, with
+   every logical-relation field re-proved. The question for arbitrary
+   inductives is where a field's *type* shape comes from. Quantifying over
+   type shapes (design C) is not level-invariant (`CounterC.lean`), so the
+   codes must be finite data on the constructor shape (design A,
+   `ClauseA.lean`). The plan stages this: stage 1a relates fields at the one
+   canonical type shape `indTy`, which works when every field type is a
+   closed inductive constant (`ℕ`, `Bool`, `Int`, monomorphic lists and
+   trees), and changes no shape definition; stage 1b adds the Π-codes. The
+   stage-1a clause's field obligations typecheck over an abstract relation
+   (`docs/const-case/plan/CtorClause1a.lean`). `TyDefEq` at `indTy` becomes "both types
+   reduce, typed, to the same `const I ls`".
+2. **A `major` rule** in `SExpr`'s `WHRed` (reduction in major-premise
+   position), so a recursor whose argument merely *reduces* to a constructor
+   can fire. Done (`b2516c4`), together with the syntactic spine lemmas and
+   `LR.Adequate.mono_r` (§4).
+3. **A termination measure** for rule right-hand sides, which are not
+   subderivations. The local induction on the interpretation derivation `hM`
+   (from the mechanisation's fixpoint case) is necessary but not sufficient:
+   its hypothesis fires only at the self-constant (`IHVacuous.lean`). The
+   outer source is well-founded induction on an environment rank, over an
+   environment-indexed strong judgment `IsDefEqStrong (E : VEnv)`, in
+   lexicographic order (rank bound, derivation, `hM`, then the `Const`/`RHS`
+   premises). `IsDefEqStrong.const` gets no new premise; `IsDefEq.strongS`
+   and `envStrongS` are unchanged; `mkS` is generalised. New `Params` fields
+   give the rank, the rank-bounded typing of constant types and of each rule's
+   right-hand side in a computed pattern context (`Pattern.gen`), and the rule
+   as a definitional equality (`pat_defeq`). Skeleton: `Measure.lean`.
+4. **Typed reductions in the relation.** All three designs missed this. At
+   the pattern leaf the rule's right-hand side has type `motive (c Zs)` and
+   the goal has type `motive x` with `x ⤳* c Zs`; converting between them at
+   a Π result shape needs a *typed* `Γ ⊢ x ≡ c Zs : I`. The untyped `whr`
+   field cannot supply it, and subject reduction (`WHRedS.defeq`) is a sorry
+   whose `VExpr` twin already reaches `sorryAx`. So `whr` and `whr_ty` become
+   typed (`TWHRedS`, `TyRedS`), `(⊥, ·)` stays `True`, and the hard case, a
+   typed `whr` at `(lam, forallE)`, goes through without a `⊢ Γ` index
+   (`docs/const-case/plan/TypedWhr.lean`). This is the plan's main bet and the first thing to
+   test (E1 below).
+5. **`extra_patV` on λ-telescopes.** Lean4Lean's rules are λ-closed schemas
+   (§5). The restated field strips the binders and, the audit found, must
+   also carry the rule's open typed equation `Δ ⊢ L ≡ R : T`: each typed beta
+   step needs the body typed at the declared codomain, and the only other
+   source is Pi-injectivity, a consequence of adequacy. The ℕ instance moves
+   to the environment that contains its rules (`envA`).
 
-The ordered work plan is §9 of `DESIGN-ctor-clause-from-artifact.md`
-("Required changes, in dependency order") together with §3 of
-`DESIGN-fuel-measure.md`; a merged plan reconciling the two will be added as
-`docs/const-case/PLAN.md`. The largest known risk is reconciling type shapes
-for parametric constructor fields, since the model collapses all inductive
-types to one code `indTy` (§7 of the artifact design).
+Stage 1a is a restriction: its `Params` fields (`indTy_closed`,
+`ctor_fields_closed`) rule out every parametric or indexed inductive with
+rules, so the stage-1a theorem does not cover Lean's prelude. Stage 2
+(parameters: syntactic argument equalities plus semantic relatedness in
+`TyDefEq` at `indTy`, `Reconcile.lean` for the field retype) is designed as a
+route only.
+
+**First experiment, E1 (the typed-LR spike).** Copy the `LogRel` block of
+`ShapeLogRel.lean` (lines ~5272–6117) and the `Adequate` definitions into a
+scratch namespace, make `sort_iff`, `whr` and `whr_ty` typed, and re-prove
+`LR0`, the 19 fields of the `LRS` instance and the lift lemmas. Pass: no
+`sorry`. If it fails, the fallback is the artifact's full typed design (`bot`
+takes `TyDefEq A A a`; an `isType` field), which costs an obligation at each
+of the 15 `bot` call sites in `ShapeLogRelAdequacy.lean`. Scratch only, one
+to two days, nothing else depends on it. `PLAN.md` §2–3.
+
+**Known risks** (`PLAN.md` §4 and its audit log). The shape-level iota match
+binds a field variable to the raw field shape, and a constructor shape counts
+as typed at `indTy` whatever its fields are (`ctor succ [sort]`), while
+`SubstWF.cons` needs typed entries: either lower fields to their typed part at
+the leaf or type constructor fields in `Shape.hasType`, to be decided before
+the pattern-leaf dry run. The spine lemma must be stated for every valuation
+above `Valuation.ofRargs`, because `Const.lam` ranges over graph pairs rather
+than typed inputs. Parametric fields are stage 2.
 
 ## 7. After the `SExpr` theorem
 
@@ -267,13 +316,16 @@ Good first tasks:
 - Turn `scripts/TraceSorry.lean` into a pass/fail check (expected sorry set
   for `IsDefEq'.uniq` is exactly `{LR.adequacy}`, no axioms beyond the three
   standard ones) and add it to CI on this fork.
-- Reformulate `extra_patV` so lambda-wrapped iota rules are pattern instances
-  (strip binders, or state it on the beta-applied form) and re-derive
-  `Params.extra_pat` (`SExpr.lean` ~1006) and its model-side uses.
+- Experiment E1 of `docs/const-case/PLAN.md`, the typed-LR spike: scratch
+  only, self-contained, and it decides the plan's main bet.
+- Restate `extra_patV` on λ-telescopes with the rule's open typed equation
+  (`PLAN.md` D5) and re-derive `Params.extra_pat` (`SExpr.lean` ~1006) and its
+  model-side uses; then move the ℕ instance to `envA` (`docs/params/`).
 - `ctor_sort` for `ℕ` (`docs/params/NatParams.lean`, `ctor_sort_nat`) needs
   `IsDefEqU.sort_inv` (`Theory/Typing/Injectivity.lean`); currently `sorry`.
 - Prove `WHRedS.defeq` in `SExpr.lean` (head reduction is a definitional
-  equality at the term's type), which §6 needs.
+  equality at the term's type). Off the path and not used by the plan, but
+  an inherited sorry worth closing.
 
 ## 9. Reading list
 
