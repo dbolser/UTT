@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before the stage-1a constructor clause (docs/const-case/PLAN.md D1/D2, landed by R3); no longer compiles.
 namespace Lean4Lean.SExpr
 variable [Params]
 

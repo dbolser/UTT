@@ -5277,6 +5277,7 @@ def TWHRedS (Γ : List SExpr) (M M' A : SExpr) : Prop := Γ ⊢ M ≡ M' : A ∧
 /-- the ambient type is (typed-equal to) a sort (D6) -/
 def AmbSort (Γ : List SExpr) (A : SExpr) : Prop := ∃ v w, Γ ⊢ A ≡ .sort v : .sort w
 
+
 structure LogRelBase (Γ : List SExpr) (n : Nat) where
   /-- Term validity: `M ≡ N : A` at element-shape `m` and type-shape `a`. -/
   DefEq (M N A : SExpr) (m a : WShape n) : Prop
@@ -5453,6 +5454,128 @@ def LRS.LamDefEq (IH : LogRel Γ n)
   (∀ {{a p}}, WShape.HasType p a₁ → Γ ⊢ a : A₁ → IH.DefEq a a A₁ p a₁ →
     IH.DefEq (M.app a) (N.app a) (A₂.inst a) (m.app p) (a₂.app p))
 
+/-! #### The stage-1a constructor clause (PLAN D1), over an abstract `IH : LogRel Γ n` -/
+
+/-- A field whose declared type is a closed inductive constant: related at the canonical
+type shape `indTy`, at every typed element shape below the recorded one (artifact `TmEqNat`). -/
+def LRS.FieldRel {Γ} : ∀ {n}, LogRel Γ n → SExpr → SExpr → SExpr → WShape n → Prop
+  | 0, _, _, _, _, _ => True
+  | _+1, IH, X, Y, T, p => ∀ q, q ≤ p → q.HasType .indTy → IH.DefEq X Y T q .indTy
+
+inductive LRS.FieldsEq {Γ} {n} (IH : LogRel Γ n) :
+    List SExpr → List SExpr → List SExpr → List (WShape n) → Prop
+  | nil : FieldsEq IH [] [] [] []
+  | cons : Γ ⊢ X ≡ Y : T → LRS.FieldRel IH X Y T p → FieldsEq IH Ts Xs Ys l →
+      FieldsEq IH (T :: Ts) (X :: Xs) (Y :: Ys) (p :: l)
+
+def LRS.CtorDefEq {Γ} {n} (IH : LogRel Γ n) (M N A : SExpr) (c : Name) (l : List (WShape n)) : Prop :=
+  ∃ (I : Name) (ls : List SLevel) (ci : VConstant) (Ts Xs Ys : List SExpr),
+    Params.classify c = some (.ctor l.length) ∧ Params.classify I = some (.indTy 0) ∧
+    Params.env.constants c = some ci ∧ SExpr.mkInst ls ci.type = Ts.foldr .forallE (.const I ls) ∧
+    TyRedS Γ A (.const I ls) ∧
+    TWHRedS Γ M (spine (.const c ls) Xs) A ∧ TWHRedS Γ N (spine (.const c ls) Ys) A ∧
+    LRS.FieldsEq IH Ts Xs Ys l
+
+theorem foldr_forallE_const_inj : ∀ {Ts Ts' : List SExpr} {I I' : Name} {ls ls' : List SLevel},
+    Ts.foldr SExpr.forallE (SExpr.const I ls) = Ts'.foldr SExpr.forallE (SExpr.const I' ls') →
+    Ts = Ts' ∧ I = I' ∧ ls = ls'
+  | [], [], _, _, _, _, h => by cases h; exact ⟨rfl, rfl, rfl⟩
+  | _ :: _, [], _, _, _, _, h | [], _ :: _, _, _, _, _, h => by cases h
+  | _ :: _, _ :: _, _, _, _, _, h => by
+    simp only [List.foldr_cons, SExpr.forallE.injEq] at h
+    obtain ⟨rfl, h⟩ := h
+    obtain ⟨rfl, rfl, rfl⟩ := foldr_forallE_const_inj h
+    exact ⟨rfl, rfl, rfl⟩
+
+theorem LRS.FieldRel.left : ∀ {n} {IH : LogRel Γ n} {X Y T p},
+    LRS.FieldRel IH X Y T p → LRS.FieldRel IH X X T p
+  | 0, _, _, _, _, _, _ => trivial
+  | _+1, IH, _, _, _, _, h => fun q hq ht => IH.left (h q hq ht)
+theorem LRS.FieldRel.symm : ∀ {n} {IH : LogRel Γ n} {X Y T p},
+    LRS.FieldRel IH X Y T p → LRS.FieldRel IH Y X T p
+  | 0, _, _, _, _, _, _ => trivial
+  | _+1, IH, _, _, _, _, h => fun q hq ht => IH.symm (h q hq ht)
+theorem LRS.FieldRel.trans : ∀ {n} {IH : LogRel Γ n} {X Y Z T p},
+    LRS.FieldRel IH X Y T p → LRS.FieldRel IH Y Z T p → LRS.FieldRel IH X Z T p
+  | 0, _, _, _, _, _, _, _, _ => trivial
+  | _+1, IH, _, _, _, _, _, h, g => fun q hq ht => IH.trans (h q hq ht) (g q hq ht)
+theorem LRS.FieldRel.mono : ∀ {n} {IH : LogRel Γ n} {X Y T} {p p' : WShape n},
+    p ≤ p' → LRS.FieldRel IH X Y T p' → LRS.FieldRel IH X Y T p
+  | 0, _, _, _, _, _, _, _, _ => trivial
+  | _+1, _, _, _, _, _, _, le, h => fun q hq ht => h q (hq.trans le) ht
+
+theorem LRS.FieldsEq.left {IH : LogRel Γ n} : LRS.FieldsEq IH Ts Xs Ys l → LRS.FieldsEq IH Ts Xs Xs l := by
+  intro H; induction H with
+  | nil => exact .nil
+  | cons h1 h2 _ ih => exact .cons h1.hasType.1 h2.left ih
+theorem LRS.FieldsEq.symm {IH : LogRel Γ n} : LRS.FieldsEq IH Ts Xs Ys l → LRS.FieldsEq IH Ts Ys Xs l := by
+  intro H; induction H with
+  | nil => exact .nil
+  | cons h1 h2 _ ih => exact .cons h1.symm h2.symm ih
+theorem LRS.FieldsEq.trans {IH : LogRel Γ n} :
+    LRS.FieldsEq IH Ts Xs Ys l → LRS.FieldsEq IH Ts Ys Zs l → LRS.FieldsEq IH Ts Xs Zs l := by
+  intro H1 H2; induction H1 generalizing Zs with
+  | nil => cases H2; exact .nil
+  | cons h1 h2 _ ih => cases H2 with | cons g1 g2 g3 => exact .cons (h1.trans g1) (h2.trans g2) (ih g3)
+theorem LRS.FieldsEq.mono {IH : LogRel Γ n} :
+    List.Forall₂ (· ≤ ·) l l' → LRS.FieldsEq IH Ts Xs Ys l' → LRS.FieldsEq IH Ts Xs Ys l := by
+  intro hle H; induction H generalizing l with
+  | nil => cases hle; exact .nil
+  | cons h1 h2 _ ih => cases hle with | cons a b => exact .cons h1 (h2.mono a) (ih b)
+
+theorem LRS.CtorDefEq.left {IH : LogRel Γ n} : LRS.CtorDefEq IH M N A c l → LRS.CtorDefEq IH M M A c l
+  | ⟨I, ls, ci, Ts, Xs, _, hc, hI, hci, hty, hA, hM, _, hF⟩ =>
+    ⟨I, ls, ci, Ts, Xs, Xs, hc, hI, hci, hty, hA, hM, hM, hF.left⟩
+theorem LRS.CtorDefEq.symm {IH : LogRel Γ n} : LRS.CtorDefEq IH M N A c l → LRS.CtorDefEq IH N M A c l
+  | ⟨I, ls, ci, Ts, Xs, Ys, hc, hI, hci, hty, hA, hM, hN, hF⟩ =>
+    ⟨I, ls, ci, Ts, Ys, Xs, hc, hI, hci, hty, hA, hN, hM, hF.symm⟩
+/-- `trans`: the middle term's two constructor spines agree (`WHRedS.ctorSpine_determ`), and
+the telescopes agree by `foldr_forallE_const_inj`. -/
+theorem LRS.CtorDefEq.trans {IH : LogRel Γ n} : LRS.CtorDefEq IH M₁ M₂ A c l → LRS.CtorDefEq IH M₂ M₃ A c l →
+    LRS.CtorDefEq IH M₁ M₃ A c l
+  | ⟨I, ls, ci, Ts, Xs, Ys, hc, hI, hci, hty, hA, hM₁, hM₂, hF⟩,
+    ⟨_, ls', ci', Ts', Ys', Zs, _, _, hci', hty', _, hM₂', hM₃, hF'⟩ => by
+    obtain ⟨rfl, rfl⟩ := WHRedS.ctorSpine_determ hc hM₂.2 hM₂'.2
+    cases hci.symm.trans hci'
+    obtain ⟨rfl, rfl, -⟩ := foldr_forallE_const_inj (hty.symm.trans hty')
+    exact ⟨I, ls, ci, Ts, Xs, Zs, hc, hI, hci, hty, hA, hM₁, hM₃, hF.trans hF'⟩
+theorem LRS.CtorDefEq.mono_l {IH : LogRel Γ n} (hle : List.Forall₂ (· ≤ ·) l l') :
+    LRS.CtorDefEq IH M N A c l' → LRS.CtorDefEq IH M N A c l
+  | ⟨I, ls, ci, Ts, Xs, Ys, hc, hI, hci, hty, hA, hM, hN, hF⟩ =>
+    ⟨I, ls, ci, Ts, Xs, Ys, (Lean4Lean.List.Forall₂.length_eq hle).symm ▸ hc, hI, hci, hty, hA,
+      hM, hN, hF.mono hle⟩
+
+/-- `whr` with typed reductions at the ambient type. -/
+theorem LRS.CtorDefEq.whr {IH : LogRel Γ n} (hM : TWHRedS Γ M M' A) (hN : TWHRedS Γ N N' A) :
+    LRS.CtorDefEq IH M N A c l ↔ LRS.CtorDefEq IH M' N' A c l := by
+  constructor
+  · intro ⟨I, ls, ci, Ts, Xs, Ys, hc, hI, hci, hty, hA, hMs, hNs, hF⟩
+    refine ⟨I, ls, ci, Ts, Xs, Ys, hc, hI, hci, hty, hA, ⟨hM.1.symm.trans hMs.1, ?_⟩,
+      ⟨hN.1.symm.trans hNs.1, ?_⟩, hF⟩
+    · exact hM.2.determ_l hMs.2 (WHNF.ctorSpine hc Xs)
+    · exact hN.2.determ_l hNs.2 (WHNF.ctorSpine hc Ys)
+  · intro ⟨I, ls, ci, Ts, Xs, Ys, hc, hI, hci, hty, hA, hMs, hNs, hF⟩
+    exact ⟨I, ls, ci, Ts, Xs, Ys, hc, hI, hci, hty, hA, ⟨hM.1.trans hMs.1, hM.2.trans hMs.2⟩,
+      ⟨hN.1.trans hNs.1, hN.2.trans hNs.2⟩, hF⟩
+
+/-- `conv` along the stage-1a `TyDefEq` at `indTy` (PLAN D2); the typed `A ≡ B` comes from
+the clause's own `TyRedS Γ A (.const I ls)` and determinism of the whnf. -/
+theorem LRS.CtorDefEq.conv {IH : LogRel Γ n}
+    (hAB : ∃ (I : Name) (ls : List SLevel), Params.classify I = some (.indTy 0) ∧
+      TyRedS Γ A (.const I ls) ∧ TyRedS Γ B (.const I ls)) :
+    LRS.CtorDefEq IH M N A c l → LRS.CtorDefEq IH M N B c l
+  | ⟨I, ls, ci, Ts, Xs, Ys, hc, hI, hci, hty, hA, hM, hN, hF⟩ => by
+    obtain ⟨I', ls', hI', ⟨⟨w₁, eA⟩, rA⟩, ⟨⟨w₂, eB⟩, rB⟩⟩ := hAB
+    have e := hA.2.determ (WHNF.indTySpine (Xs := []) hI) rA (WHNF.indTySpine (Xs := []) hI')
+    cases e
+    have hAB' : Γ ⊢ A ≡ B : .sort w₁ := eA.trans' eB.symm
+    exact ⟨I, ls, ci, Ts, Xs, Ys, hc, hI, hci, hty, ⟨⟨w₂, eB⟩, rB⟩,
+      ⟨hAB'.defeqDF hM.1, hM.2⟩, ⟨hAB'.defeqDF hN.1, hN.2⟩, hF⟩
+
+/-- `trans'` needs no new premise: a sort ambient cannot reduce to an inductive constant. -/
+theorem LRS.CtorDefEq.not_sort {IH : LogRel Γ n} : ¬ LRS.CtorDefEq IH M N (.sort u) c l
+  | ⟨_, _, _, _, _, _, _, _, _, _, ⟨_, rA⟩, _⟩ => by cases WHNF.sort.whRedS rA
+
 /-- Monotonicity of `LamDefEq` in the type-shape: increase. -/
 theorem LRS.LamDefEq.mono_r_1 {IH : LogRel Γ n}
     (le₁ : a₁ ≤ a₁') (le₂ : a₂ ≤ a₂') (hm : WShape.HasTypeLam m a₁ a₂)
@@ -5483,9 +5606,11 @@ theorem LRS.LamDefEq.mono_r_1 {IH : LogRel Γ n}
 /-- Type validity at element-shape `m` (merged `TyDefEq` / `EqTyDefEq`).
 Non-trivial at `.forallE` (Pi injectivity) and `.sort` (sort injectivity). -/
 def LRS.TyDefEq (IH : LogRel Γ n) (M N : SExpr) : WShape (n+1) → Prop
-  | ⟨.bot, _⟩ | ⟨.lam _, _⟩ | ⟨.ctor _ _, _⟩ | ⟨.indTy, _⟩ => True
+  | ⟨.bot, _⟩ | ⟨.lam _, _⟩ | ⟨.ctor _ _, _⟩ => True
   | ⟨.sort _, _⟩ => ∃ u, TyRedS Γ M (.sort u) ∧ TyRedS Γ N (.sort u)
   | ⟨.forallE b f, wf⟩ => LRS.ValTyPi2 IH M N ⟨b, wf.1⟩ ⟨f, wf.2⟩
+  | ⟨.indTy, _⟩ => ∃ (I : Name) (ls : List SLevel), Params.classify I = some (.indTy 0) ∧
+      TyRedS Γ M (.const I ls) ∧ TyRedS Γ N (.const I ls)
 
 @[simp] theorem LRS.TyDefEq.bot : LRS.TyDefEq IH M N .bot := trivial
 @[simp] theorem LRS.TyDefEq.sort_iff :
@@ -5504,6 +5629,7 @@ theorem LRS.TyDefEq.left {IH : LogRel Γ n} :
   · intro ⟨u, hM, _⟩; exact ⟨u, hM, hM⟩
   · intro ⟨B₁, F₁, _, _, u, v, rM, _, hB, hF, hValB, hE⟩
     exact ⟨B₁, F₁, B₁, F₁, u, v, rM, rM, hB.hasType.1, hF.hasType.1, IH.left_ty hValB, hE.left⟩
+  · intro ⟨I, ls, hI, hM, _⟩; exact ⟨I, ls, hI, hM, hM⟩
 
 theorem LRS.TyDefEq.symm {IH : LogRel Γ n} :
     LRS.TyDefEq IH M N m → LRS.TyDefEq IH N M m := by
@@ -5515,6 +5641,7 @@ theorem LRS.TyDefEq.symm {IH : LogRel Γ n} :
       hValB', fun _ _ _ hp ha a1 => ?_, fun _ _ hp ha a1 => ?_⟩
     · exact (hE1 hp (hB.symm.defeqDF ha) (IH.conv hValB' a1)).symm
     · exact IH.symm_ty (hE2 hp (hB.symm.defeqDF ha) (IH.conv hValB' a1))
+  · intro ⟨I, ls, hI, hM, hN⟩; exact ⟨I, ls, hI, hN, hM⟩
 
 theorem LRS.TyDefEq.trans {IH : LogRel Γ n} :
     LRS.TyDefEq IH M₁ M₂ m → LRS.TyDefEq IH M₂ M₃ m → LRS.TyDefEq IH M₁ M₃ m := by
@@ -5529,6 +5656,9 @@ theorem LRS.TyDefEq.trans {IH : LogRel Γ n} :
       IH.trans_ty hValB₁₂ hValB₂₃, fun _ _ _ hp ha a1 => ?_, fun _ _ hp ha a1 => ?_⟩
     · exact ⟨(hE1.1 hp ha a1).1, (hE2.1 hp (hB₁₂.defeqDF ha) (IH.conv hValB₁₂ a1)).2⟩
     · exact IH.trans_ty (hE1.2 hp ha a1) (hE2.2 hp (hB₁₂.defeqDF ha) (IH.conv hValB₁₂ a1))
+  · intro ⟨I, ls, hI, h₁, h₂⟩ ⟨I', ls', hI', h₂', h₃⟩
+    cases h₂.2.determ (WHNF.indTySpine (Xs := []) hI) h₂'.2 (WHNF.indTySpine (Xs := []) hI')
+    exact ⟨I, ls, hI, h₁, h₃⟩
 
 /-- typed head reduction of both sides preserves `TyDefEq` (D6: the old `whr_ty` field proof,
 with the reductions composed by `TyRedS.whnf_l`/`TyRedS.trans`) -/
@@ -5543,6 +5673,11 @@ theorem LRS.TyDefEq.whr {IH : LogRel Γ n} (hA : TyRedS Γ A A') (hB : TyRedS Γ
     constructor <;> intro ⟨B₁, F₁, B₂, F₂, u, v, rM, rN, rest⟩
     · exact ⟨B₁, F₁, B₂, F₂, u, v, hA.whnf_l rM .forallE, hB.whnf_l rN .forallE, rest⟩
     · exact ⟨B₁, F₁, B₂, F₂, u, v, hA.trans rM, hB.trans rN, rest⟩
+  | indTy =>
+    constructor <;> intro ⟨I, ls, hI, r1, r2⟩
+    · exact ⟨I, ls, hI, hA.whnf_l r1 (WHNF.indTySpine (Xs := []) hI),
+        hB.whnf_l r2 (WHNF.indTySpine (Xs := []) hI)⟩
+    · exact ⟨I, ls, hI, hA.trans r1, hB.trans r2⟩
   | _ => rfl
 
 theorem LRS.LamDefEq.left {IH : LogRel Γ n} :
@@ -5709,7 +5844,10 @@ def LRS.DefEq (IH : LogRel Γ n) (M N A : SExpr) (m a : WShape (n+1)) : Prop :=
       LRS.PiDefEq IH A₁ A₂ A₂ ⟨a₁, wfa1⟩ ⟨a₂, wfa2⟩ ∧
       LRS.LamDefEq IH M N A₁ A₂ ⟨mg, (hm ▸ m.2).1⟩ ⟨a₁, wfa1⟩ ⟨a₂, wfa2⟩
     | _ => False
-  | .indTy => True
+  | .indTy => match hm : m.1 with
+    | .bot => True
+    | .ctor c l => LRS.CtorDefEq IH M N A c (l.pmap Subtype.mk (hm ▸ m.2).1)
+    | _ => False
   | _ => False
 
 @[simp] theorem LRS.DefEq.bot_a : LRS.DefEq IH M N A m .bot = True := rfl
@@ -5747,8 +5885,25 @@ theorem lift_ne_bot {s : WShape n} (le : n ≤ m) (h : s ≠ .bot) : s.lift m �
 @[simp] theorem LRS.TyDefEq.lam_m : LRS.TyDefEq IH M N (.lam f hf) ↔ True := .rfl
 @[simp] theorem LRS.TyDefEq.ctor_m {c l h} :
     LRS.TyDefEq (n := n) IH M N (.ctor c l h) ↔ True := .rfl
-@[simp] theorem LRS.TyDefEq.indTy_m : LRS.TyDefEq (n := n) IH M N .indTy ↔ True := .rfl
-@[simp] theorem LRS.DefEq.indTy_a : LRS.DefEq (n := n) IH M N A m .indTy ↔ True := .rfl
+/-- D2 replaces the old `rfl` lemma `LRS.TyDefEq.indTy_m` (`↔ True`, false now). -/
+@[simp] theorem LRS.TyDefEq.indTy_m : LRS.TyDefEq (Γ := Γ) (n := n) IH M N .indTy ↔
+    ∃ (I : Name) (ls : List SLevel), Params.classify I = some (.indTy 0) ∧
+      TyRedS Γ M (.const I ls) ∧ TyRedS Γ N (.const I ls) := .rfl
+/-- D1 replaces the old `rfl` lemma `LRS.DefEq.indTy_a` (`↔ True`, false now) by three:
+the `(⊥, indTy)` row stays `True` ... -/
+@[simp] theorem LRS.DefEq.bot_indTy : LRS.DefEq (n := n) IH M N A .bot .indTy = True := rfl
+/-- ... the `(ctor c l, indTy)` row is the constructor clause ... -/
+@[simp] theorem LRS.DefEq.ctor_indTy {IH : LogRel Γ n} {c l h} :
+    LRS.DefEq IH M N A (.ctor c l h) .indTy ↔ LRS.CtorDefEq IH M N A c l := by
+  show LRS.CtorDefEq IH M N A c ((l.map (·.1)).pmap Subtype.mk _) ↔ _
+  rw [List.pmap_map]; simp only [Subtype.eta, List.pmap_eq_map, List.map_id']
+/-- ... and every other row at `indTy` is `False`. -/
+theorem LRS.DefEq.indTy_a {IH : LogRel Γ n} (h1 : m ≠ .bot) (h2 : ∀ c l h, m ≠ .ctor c l h) :
+    LRS.DefEq IH M N A m .indTy ↔ False := by
+  cases m using WShape.casesOn' with
+  | bot => exact (h1 rfl).elim
+  | ctor => exact (h2 _ _ _ rfl).elim
+  | _ => exact .rfl
 
 def LRS (IH : LogRel Γ n) : LogRel Γ (n+1) where
   DefEq := LRS.DefEq IH
@@ -5764,6 +5919,8 @@ def LRS (IH : LogRel Γ n) : LogRel Γ (n+1) where
     · cases m using WShape.casesOn' with | lam => ?_ | _ => exact id
       intro ⟨A₁, A₂, u, v, rA, hA1, hA2, hA₂, hE, hP⟩
       exact ⟨A₁, A₂, u, v, rA, hA1, hA2, hA₂, hE, hP.left⟩
+    · split <;> try trivial
+      exact LRS.CtorDefEq.left
   symm_ty := .symm
   symm {M N A m a} := by
     dsimp [LRS.DefEq]; split <;> try trivial
@@ -5772,6 +5929,8 @@ def LRS (IH : LogRel Γ n) : LogRel Γ (n+1) where
     · cases m using WShape.casesOn' with | lam => ?_ | _ => exact id
       intro ⟨A₁, A₂, u, v, rA, hA1, hA2, hA₂, hE, hP⟩
       exact ⟨A₁, A₂, u, v, rA, hA1, hA2, hA₂, hE, hP.symm⟩
+    · split <;> try trivial
+      exact LRS.CtorDefEq.symm
   trans_ty := .trans
   trans {M₁ M₂ A m a M₃} := by
     dsimp [LRS.DefEq]; split <;> try trivial
@@ -5781,12 +5940,16 @@ def LRS (IH : LogRel Γ n) : LogRel Γ (n+1) where
       intro ⟨B, F, u, v, rA, hA1, hA2, hA₂, hE, hP⟩ ⟨_, _, _, _, rA', _, _, _, _, hP'⟩
       cases rA.2.determ .forallE rA'.2 .forallE
       exact ⟨_, _, _, _, rA, hA1, hA2, hA₂, hE, hP.trans hP'⟩
+    · split <;> try trivial
+      exact LRS.CtorDefEq.trans
   trans' {A₁ A₂ u a s A₃ v r} := by
     dsimp [LRS.DefEq]; split <;> try intros; trivial
     · split <;> try intros; trivial
       exact fun ⟨hA, h⟩ ⟨_, h'⟩ => ⟨hA, h.trans h'⟩
     · split <;> try intros; trivial
       intro ⟨_, _, _, _, rA, _⟩; cases WHNF.sort.whRedS rA.2
+    · split <;> try intros; trivial
+      intro h; exact (LRS.CtorDefEq.not_sort h).elim
   conv {A A' a M N m} := by
     cases a using WShape.casesOn' with
     | sort r =>
@@ -5795,6 +5958,12 @@ def LRS (IH : LogRel Γ n) : LogRel Γ (n+1) where
       | bot => exact id
       | _ => exact fun ⟨_, h⟩ => ⟨hA'.ambSort, h⟩
     | forallE b f => ?_
+    | indTy =>
+      intro hAB
+      cases m using WShape.casesOn' with
+      | ctor c l h =>
+        rw [LRS.DefEq.ctor_indTy, LRS.DefEq.ctor_indTy]; exact LRS.CtorDefEq.conv hAB
+      | _ => exact id
     | _ => exact fun _ => id
     intro ⟨B, F, B', F', u, v, rA, rA', hBB', hFF', hValB, hEdge⟩
     cases m using WShape.casesOn' with | lam => ?_ | _ => exact id
@@ -5846,7 +6015,7 @@ def LRS (IH : LogRel Γ n) : LogRel Γ (n+1) where
       | indTy => simp [LRS.DefEq.indTy_forallE] at h
     | lam f hf => exact absurd hm.isType WShape.HasType.lam_isType
     | ctor => exact absurd hm.isType WShape.HasType.ctor_isType
-    | indTy => simp [LRS.DefEq.indTy_a] at h ⊢
+    | indTy => cases WShape.indTy_le.1 le; exact h
   mono_r_2_ty {a a' A B} le ha ha' h := by
     cases a using WShape.casesOn' with
     | bot => trivial
@@ -5863,7 +6032,7 @@ def LRS (IH : LogRel Γ n) : LogRel Γ (n+1) where
       exact hEdge.mono_r_2 le1 le2 hp hp' (IH.left_ty hValB)
     | lam f hf => simp [LRS.TyDefEq.lam_m]
     | ctor => simp [LRS.TyDefEq.ctor_m]
-    | indTy => simp [LRS.TyDefEq.indTy_m]
+    | indTy => cases WShape.indTy_le.1 le; exact h
   mono_r_1 {a a' A M N m} le ha ha' hA h := by
     cases a' using WShape.casesOn' with
     | bot => simp only [LRS.DefEq.bot_a]
@@ -5901,7 +6070,10 @@ def LRS (IH : LogRel Γ n) : LogRel Γ (n+1) where
         | indTy => exact (LRS.DefEq.indTy_forallE.1 h).elim
     | lam f hf => exact absurd ha'.isType WShape.HasType.lam_isType
     | ctor => exact absurd ha'.isType WShape.HasType.ctor_isType
-    | indTy => simp [LRS.DefEq.indTy_a]
+    | indTy =>
+      obtain rfl | rfl := WShape.le_indTy.1 le
+      · have := ha.bot_r; subst this; simp only [LRS.DefEq.bot_indTy]
+      · exact h
   mono_l {m m' M N A a} le hm hm' h := by
     cases a using WShape.casesOn' with
     | bot => simp only [LRS.DefEq.bot_a]
@@ -5927,7 +6099,7 @@ def LRS (IH : LogRel Γ n) : LogRel Γ (n+1) where
           hEdge.mono_r_2 h1 h2 hm_pi hm'_pi (IH.left_ty hValB)⟩
       | lam => simp only [LRS.TyDefEq.lam_m]
       | ctor => simp only [LRS.TyDefEq.ctor_m]
-      | indTy => simp only [LRS.TyDefEq.indTy_m]
+      | indTy => cases WShape.indTy_le.1 le; exact h
     | forallE a₁ a₂ =>
       cases m using WShape.casesOn' with
       | bot => simp only [LRS.DefEq.bot_m]
@@ -5950,7 +6122,13 @@ def LRS (IH : LogRel Γ n) : LogRel Γ (n+1) where
             cases WShape.le_bot.1 (hg'' ▸ le)
         · cases hgf'
       | _ => cases hm
-    | indTy => simp only [LRS.DefEq.indTy_a]
+    | indTy =>
+      cases hm.unfold with
+      | bot => simp only [LRS.DefEq.bot_indTy]
+      | ctor =>
+        obtain ⟨l', h', rfl, hle⟩ := WShape.ctor_le.1 le
+        rw [LRS.DefEq.ctor_indTy] at h ⊢
+        exact h.mono_l hle
     | _ => cases hm.isType
   join_ty {A B m₁ m₂} hC hm₁ hm₂ h1 h2 := by
     cases hm₁.unfold with
@@ -5990,6 +6168,9 @@ def LRS (IH : LogRel Γ n) : LogRel Γ (n+1) where
       constructor <;> intro ⟨A₁, A₂, u, v, rA, hA1, hA2, hA₂, hE, hP⟩ <;> obtain ⟨_, eA⟩ := rA.1
       · exact ⟨A₁, A₂, u, v, rA, hA1, hA2, hA₂, hE, (LRS.LamDefEq.whr_typed eA hM hN).1 hP⟩
       · exact ⟨A₁, A₂, u, v, rA, hA1, hA2, hA₂, hE, (LRS.LamDefEq.whr_typed eA hM hN).2 hP⟩
+    | indTy =>
+      cases m using WShape.casesOn' with | ctor => ?_ | _ => rfl
+      rw [LRS.DefEq.ctor_indTy, LRS.DefEq.ctor_indTy]; exact LRS.CtorDefEq.whr hM hN
     | _ => rfl
   whr_ty := LRS.TyDefEq.whr
 
@@ -6000,6 +6181,74 @@ def LR (Γ : List SExpr) : LogRel Γ n :=
 
 @[simp] theorem LR_zero : LR (n := 0) Γ = LR0 := rfl
 @[simp] theorem LR_succ : LR (n := n+1) Γ = LRS (LR Γ) := rfl
+
+/-- The new case of `LR.lift_succ_aux` for the constructor clause's fields (both directions;
+`docs/const-case/plan/historical/CtorClause1a.lean`). -/
+theorem LRS.FieldRel.lift_aux {Γ : List SExpr} {X Y T : SExpr} : ∀ {k} {p : WShape k},
+    (∀ {M N A : SExpr} {m a : WShape k}, m.HasType a →
+      ((LR Γ (n := k+1)).DefEq M N A (m.lift (k+1)) (a.lift (k+1)) ↔ (LR Γ (n := k)).DefEq M N A m a)) →
+    (LRS.FieldRel (LR Γ (n := k+1)) X Y T (p.lift (k+1)) ↔ LRS.FieldRel (LR Γ (n := k)) X Y T p)
+  | 0, p, _ => by
+    refine ⟨fun _ => trivial, fun _ q hq ht => ?_⟩
+    cases ht.unfold with
+    | bot _ => exact (LR Γ).bot .indTy
+    | @ctor _ c l wf =>
+      exfalso
+      obtain ⟨_, _, he, _⟩ := WShape.ctor_le.1 hq
+      cases p using WShape.casesOn with
+      | bot => rw [WShape.lift_bot] at he; cases congrArg (·.1) he
+      | sort => rw [WShape.lift_sort] at he; cases congrArg (·.1) he
+  | j+1, p, IH2 => by
+    constructor
+    · intro H q₀ hq₀ ht₀
+      have hl : (q₀.lift (j+2)).HasType ((WShape.indTy : WShape (j+1)).lift (j+2)) :=
+        (WShape.HasType.lift (Nat.le_succ _)).2 ht₀
+      rw [WShape.lift_indTy] at hl
+      have := H _ (WShape.lift_mono (Nat.le_succ _) hq₀) hl
+      rw [← WShape.lift_indTy (n := j) (m := j+1)] at this
+      exact (IH2 ht₀).1 this
+    · intro H q hq ht
+      cases ht.unfold with
+      | bot _ => exact (LR Γ).bot .indTy
+      | @ctor _ c l wf =>
+        obtain ⟨l', h', he, _⟩ := WShape.ctor_le.1 hq
+        have hpl : (p.lift (j+2)).HasType ((WShape.indTy : WShape (j+1)).lift (j+2)) := by
+          rw [WShape.lift_indTy, he]; exact .ctor
+        have hp : p.HasType .indTy := (WShape.HasType.lift (Nat.le_succ _)).1 hpl
+        have d := (IH2 hp).2 (H p .rfl hp)
+        rw [WShape.lift_indTy] at d hpl
+        exact (LR Γ).mono_l hq ht hpl d
+
+theorem LRS.FieldsEq.lift_aux {Γ : List SExpr} {k}
+    (IH2 : ∀ {M N A : SExpr} {m a : WShape k}, m.HasType a →
+      ((LR Γ (n := k+1)).DefEq M N A (m.lift (k+1)) (a.lift (k+1)) ↔ (LR Γ (n := k)).DefEq M N A m a)) :
+    ∀ {Ts Xs Ys : List SExpr} {l : List (WShape k)},
+    LRS.FieldsEq (LR Γ (n := k+1)) Ts Xs Ys (l.map (·.lift (k+1))) ↔
+      LRS.FieldsEq (LR Γ (n := k)) Ts Xs Ys l
+  | [], [], [], [] => ⟨fun _ => .nil, fun _ => .nil⟩
+  | T :: Ts, X :: Xs, Y :: Ys, p :: l => by
+    constructor
+    · intro H; cases H with
+      | cons h1 h2 h3 =>
+        exact .cons h1 ((LRS.FieldRel.lift_aux IH2).1 h2) ((LRS.FieldsEq.lift_aux IH2).1 h3)
+    · intro H; cases H with
+      | cons h1 h2 h3 =>
+        exact .cons h1 ((LRS.FieldRel.lift_aux IH2).2 h2) ((LRS.FieldsEq.lift_aux IH2).2 h3)
+  | [], _ :: _, _, _ | [], [], _ :: _, _ | [], [], [], _ :: _ => ⟨nofun, nofun⟩
+  | _ :: _, [], _, _ | _ :: _, _ :: _, [], _ | _ :: _, _ :: _, _ :: _, [] => ⟨nofun, nofun⟩
+
+theorem LRS.CtorDefEq.lift_aux {Γ : List SExpr} {k} {M N A : SExpr} {c : Name} {l : List (WShape k)}
+    (IH2 : ∀ {M N A : SExpr} {m a : WShape k}, m.HasType a →
+      ((LR Γ (n := k+1)).DefEq M N A (m.lift (k+1)) (a.lift (k+1)) ↔ (LR Γ (n := k)).DefEq M N A m a)) :
+    LRS.CtorDefEq (LR Γ (n := k+1)) M N A c (l.map (·.lift (k+1))) ↔
+      LRS.CtorDefEq (LR Γ (n := k)) M N A c l := by
+  constructor
+  · intro ⟨I, ls, ci, Ts, Xs, Ys, hc, hI, hci, hty, hA, hM, hN, hF⟩
+    exact ⟨I, ls, ci, Ts, Xs, Ys, by simpa using hc, hI, hci, hty, hA, hM, hN,
+      (LRS.FieldsEq.lift_aux IH2).1 hF⟩
+  · intro ⟨I, ls, ci, Ts, Xs, Ys, hc, hI, hci, hty, hA, hM, hN, hF⟩
+    exact ⟨I, ls, ci, Ts, Xs, Ys, by simpa using hc, hI, hci, hty, hA, hM, hN,
+      (LRS.FieldsEq.lift_aux IH2).2 hF⟩
 
 private theorem LRS.PiDefEq.lift_aux
     {b : WShape n} {f : WShapeFun n} (le : n ≤ n') (htpi_a : WShape.HasTypePi f b true)
@@ -6126,7 +6375,15 @@ private theorem LR.lift_succ_aux :
       · exact (LRS.PiDefEq.lift_aux (Nat.le_succ k) htpi ih.1 ih.2).2 hE
     · intro M N A m a hma
       cases a using WShape.casesOn' with
-      | bot | indTy => constructor <;> intro <;> trivial
+      | bot => constructor <;> intro <;> trivial
+      | indTy =>
+        -- D1: `m` is `⊥` (both sides `True`) or `ctor c l` (`LRS.CtorDefEq.lift_aux`)
+        rw [WShape.lift_indTy]
+        cases hma.unfold with
+        | bot => rw [WShape.lift_bot]; exact ⟨fun _ => trivial, fun _ => trivial⟩
+        | @ctor _ c l wf =>
+          rw [WShape.lift_ctor (Nat.le_succ k), LRS.DefEq.ctor_indTy]
+          exact (LRS.CtorDefEq.lift_aux ih.2).trans (LRS.DefEq.ctor_indTy (h := wf)).symm
       | sort r =>
         -- D6: the `(⊥, sort)` row is `True` on both sides; elsewhere `AmbSort Γ A` is copied
         rw [WShape.lift_sort]

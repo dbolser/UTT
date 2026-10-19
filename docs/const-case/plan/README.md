@@ -75,6 +75,14 @@ Audit round 3:
 | `ExtraLamStmt.lean` | The statement of the `extra` case of `strongSoundS` for λ-wrapped rules, with the λ-form `extra_patV` as an explicit hypothesis (experiment E5); one marked sorry. |
 | `RhsLowerStmt.lean` | `Valuation.lower` and the statement of the lowering lemma `rhs_lower` for the pattern leaf (experiment E6a); three marked sorries, two inherited from `PatLeafStmt2.lean`. |
 
+## E2/ (the stage-1a constructor clause, PASSED 2026-10-19)
+
+`E2/E2-REPORT.md` is the report. `E2/CtorLR.lean` is the typed `LogRel` block
+(`ShapeLogRel.lean:5280-6216` at `dc61a99`) with D1 and D2 wired in, sorry-free;
+`E2/CtorAdequacy.lean` is the adequacy lemma over it, byte-identical to the repo's
+(only the `const`-case sorry). `E2/Check.lean` is the axiom and tracer check.
+Module files, excluded from `../check.sh`; the report's §4 says how to rebuild.
+
 ## E1/ (the typed-LR spike, PASSED 2026-10-19)
 
 `E1/E1-REPORT.md` is the report. `E1/TypedLR.lean` is `ShapeLogRel.lean:5272-6117` with
