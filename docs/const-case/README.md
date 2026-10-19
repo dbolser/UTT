@@ -28,8 +28,12 @@ Start with `PLAN.md`.
 
 All `.lean` files begin with `import Lean4Lean.Experimental.ShapeLogRelAdequacy`
 and are not part of the build. `./check.sh` typechecks every one against the
-current tree. Files marked "deliberate sorries" contain `sorry`s that mark the
-statements under design (each is commented); the others are sorry-free.
+current tree (last checked at `1710175`, whose `Lean4Lean/` equals `3c35f59`).
+They are written against today's definitions, so as the plan's changes to
+`ShapeLogRel.lean` and `SExpr.lean` land they will stop compiling; the plan
+(`PLAN.md` R1, R13) then marks them historical and pins the check to `3c35f59`.
+Files marked "deliberate sorries" contain `sorry`s that mark the statements
+under design (each is commented); the others are sorry-free.
 
 Backing the design notes (written against earlier snapshots, kept compiling):
 

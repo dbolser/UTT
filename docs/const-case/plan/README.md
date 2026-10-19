@@ -2,11 +2,11 @@
 
 Scratch Lean files written by the synthesizer, the refuters and the auditors
 of the plan, copied verbatim (their docstrings cite `/tmp/utt-snap6`, a build
-of commit `3c35f59`, and `/tmp/utt-exp/plan/...` scratch paths). Each begins
-with `import Lean4Lean.Experimental.ShapeLogRelAdequacy`; none is part of the
-build; `../check.sh` typechecks them all. All are sorry-free except
-`PatLeafStmt.lean`, whose two theorem bodies are deliberate sorries (it pins
-statements). `PLAN.md` cites them by bare name, with the tag [T].
+of commit `3c35f59`, and `/tmp/utt-exp/plan/...` scratch paths). Each imports
+`Lean4Lean.Experimental.ShapeLogRelAdequacy` (`AxDepsV.lean` only
+`Theory.Typing.Strong`); none is part of the build; `../check.sh` typechecks them all. All are sorry-free except
+the four `*Stmt*.lean` files, whose theorem bodies are deliberate sorries (they
+pin statements for the experiments). `PLAN.md` cites them by bare name, with the tag [T].
 
 The plan's own constructions (D1, D6):
 
@@ -50,3 +50,23 @@ Audit round 1 (see the plan's audit log):
 | `UntypedField.lean` | `ctor c [sort]` is typed at `indTy` by `rfl` while its field is typed at nothing; the shape-level iota match binds a field variable to that raw shape; the stage-1a `FieldRel` is vacuous there. Open risk in `STATUS.md` §6. |
 | `WeakE.lean` | `IsDefEqStrong` with an explicit environment `E ≤ Params.env`: `closedN`, `weak'`, `weak0` re-proved for it. Needed by the rank induction. |
 | `PatLeafStmt.lean` | The statements of `LR.pat_leaf_1a` (the interface between the spine lemma and the pattern leaf, experiment E6) and of the amended spine lemma `LR.const_spine`, typechecked as statements with stand-ins for the not-yet-existing typed relation, `Params.rank` and `IsDefEqStrong E`. Bodies are marked sorries. |
+
+Audit round 2:
+
+| file | shows |
+|---|---|
+| `JunkGen.lean` | `pat_leaf_1a` as first stated took `g : PatGen` with nothing tying it to the rule; a junk `g` satisfies its typing hypotheses for every rule. Hence the hypothesis `Pattern.gen … = some g` and the `Pattern.gen` specification lemmas. |
+| `PatLeafStmt2.lean` | `pat_leaf_1a` restated with the hypothesis `Pattern.gen … = some g` (supersedes `PatLeafStmt.lean`); statements only, two marked sorries. |
+| `Beyond.lean` | `Const.beyond`: a `Const` derivation at more arguments than the syntactic Π-telescope of the constant's type is `⊥`, from three arity bounds (`ctor_syn`, `indTy_closed`, `pat_gen`). Closes the `lam` case of the spine lemma when the remaining type is a Π only after delta. |
+| `AxDeps.lean`, `AxDepsV.lean` | `#print axioms` of every repo lemma the plan uses as a building block: all sorry-free except `WHRedS.defeq`, which the plan does not use. |
+
+Audit round 3:
+
+| file | shows |
+|---|---|
+| `MkSE.lean` | `mkSE`, the translation lemma over an environment-indexed strong judgment, ported from `mkS` with env-generic `hasTypeS`/`isType'` and a `CtorProviderE`. Pins R4's real size. |
+| `EmptyBelow.lean` | `rank_ordered` holds for the empty environment: `VEnv.below` of `∅` is `∅`. |
+| `SelfType.lean` | `mkInst_instL`: the type of a self entry in the pattern context, `mkInst ls (ci.type.instL us)`, is the constant's own instantiated type, so the local induction hypothesis plugs into `Adequate.cons` for self entries. Hence the `gen_self` specification lemma. |
+| `ForallInvE.lean` | `IsDefEqStrong.forallE_inv'` over an arbitrary environment, and the telescope lemma that gives the spine lemma's `lam` case a rank-bounded derivation of each domain type. |
+| `ExtraLamStmt.lean` | The statement of the `extra` case of `strongSoundS` for λ-wrapped rules, with the λ-form `extra_patV` as an explicit hypothesis (experiment E5); one marked sorry. |
+| `RhsLowerStmt.lean` | `Valuation.lower` and the statement of the lowering lemma `rhs_lower` for the pattern leaf (experiment E6a); three marked sorries, two inherited from `PatLeafStmt2.lean`. |

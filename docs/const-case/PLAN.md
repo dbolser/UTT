@@ -1,16 +1,18 @@
 # PLAN: the `const` case of `LR.adequacy` (merged implementation plan)
 
 > **Landed in the repo 2026-10-19.** Written by an Opus synthesizer from three design notes, five
-> lens analyses and their adversarial refutations, then audited for completeness and circularity;
-> audit round 1 (14 amendments) is applied, see §6 at the end. Round 2 is in progress and will be
-> folded in. Evidence files tagged [T] are in `plan/` (see `plan/README.md`) or in this directory;
-> `/tmp/utt-snap6` in their docstrings is a build of commit `3c35f59`, which is what every line
-> number here refers to. Paths into `/tmp/utt-ref/paper-artifacts/` are a local copy of the paper's
-> supplementary Lean code (`domain-semantics-lean-BEE7`). Scratch files not copied here: the
-> `Probe*.lean` and `Exp2_recheck.lean` probes and `Retype.lean` (no longer typechecks at HEAD).
+> lens analyses and their adversarial refutations, then audited in three rounds by a completeness
+> auditor and a circularity-and-measure auditor (14 + 9 + 9 amendments, all applied; §6 at the end
+> is the log). Evidence files tagged [T] are in `plan/` (see `plan/README.md`) or in this
+> directory; `/tmp/utt-snap6` in their docstrings is a build of commit `3c35f59`, which is what
+> every line number here refers to. Paths into `/tmp/utt-ref/paper-artifacts/` are a local copy of
+> the paper's supplementary Lean code (`domain-semantics-lean-BEE7`). Scratch files not copied
+> here: the `Probe*.lean` and `Exp2_recheck.lean` probes and `Retype.lean` (no longer typechecks
+> at HEAD). The experiments in this directory are pinned to today's definitions and will stop
+> compiling as the plan's changes land (see R1's docs-pinning step).
 
 
-Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit round 1, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.
+Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.
 `/tmp/utt-snap6` is a built copy of HEAD (`diff -rq` of `Lean4Lean/`: identical). Line numbers are
 HEAD's. Inputs: design A `DESIGN-ctor-code-shape.md`, design B
 `docs/const-case/DESIGN-fuel-measure.md`, design C `docs/const-case/DESIGN-ctor-clause-from-artifact.md`,
@@ -101,6 +103,12 @@ Evidence files cited by bare name (all typecheck at `/tmp/utt-snap6`; the paths 
 | `LamRuleTyped`, `UntypedField` | `plan/` |
 | `WeakE` | `plan/` |
 | `PatLeafStmt` (statements only; its 2 theorem bodies are marked sorries) | `plan/` |
+| `PatLeafStmt2` (round-2 copy of `PatLeafStmt` with `hg`; same 2 marked sorries) | `plan/` |
+| `JunkGen`, `AxDeps`, `AxDepsV` | `plan/` |
+| `Beyond` | `plan/` |
+| `MkSE` | `plan/` |
+| `ForallInvE`, `SelfType` | `plan/` |
+| `RhsLowerStmt` (round-3 copy of `PatLeafStmt2` plus `Valuation.lower` and the `rhs_lower` statement; 3 marked sorries), `ExtraLamStmt` (E5 statement; 1 marked sorry) | `plan/` |
 | `Stuck`, `Subst1`, `CtorClause`, `Fuel` | `./` |
 | `EmptyParams`, `NatParams` | `../params/` |
 | artifact `LogRel.lean`, `Adequacy.lean` | `/tmp/utt-ref/paper-artifacts/domain-semantics-lean-BEE7/DomainSemantics/` |
@@ -157,7 +165,7 @@ Why each piece:
 - `TWHRedS Γ M (spine …) A` is the typed reduction that the pat leaf needs (§0.2). It needs the typed
   `whr` of D6 (`CtorDefEq1a.whr` [T]).
 - `FieldRel` uses the `∀ q ≤ p` form. `mono_l` then needs no field typing, so `Shape.hasType (.ctor _ _) .indTy = true`
-  (2494) stays (`CtorDefEq1a.mono_l` [T]). The `lift` ⇐ direction instantiates at `p` itself, which is a
+  (2493) stays (`CtorDefEq1a.mono_l` [T]). The `lift` ⇐ direction instantiates at `p` itself, which is a
   ctor shape and therefore typed (`FieldRel.lift_aux` [T]). Fields are related at `indTy` only:
   in stage 1a every field type is a closed inductive constant, whose type shapes are `⊥`/`indTy`
   (`Const.indTy` leaf, `ShapeLogRel.lean:3329`); only `⊥` if it is Prop-valued (`UntypedField.lean: indTy_not_prop` [T]).
@@ -272,7 +280,11 @@ Re-proof cost:
 - `IsDefEq.strongS` (SExpr.lean:1767) and `Params.envStrongS` (1946) are unchanged (`E := Params.env`).
 - `mkS` (1818) is generalised to `mkSE`. `CtorProvider` (1805) is restated over `E`, with
   `CtorProvider.synE` using `ctor_syn`/`ctor_sort` through `E ≤ env` and `HasType.mono`
-  (Theory/Typing/Lemmas.lean:402). About 60 lines. The refuter is right that this is not 5 lines.
+  (Theory/Typing/Lemmas.lean:402). `mkSE` uses `isType'` (trans case, 1824) and `hasTypeS` (const case, 1841),
+  which are stated with `⊢ₛ` (= `Params.env`), so R4 restates `hasTypeS`/`hasType'`/`isType'`/`hasType`
+  (1338-1365) for any `E`, with no `hE` (the proofs do not use the environment). About 65 lines for `mkSE`
+  plus ~20 for `CtorProviderE.synE` (`MkSE.lean` [T], both sorry-free; there `mkSE` takes only `hctor`,
+  and `hctor := CtorProviderE.synE hE`).
 - 14 statement sites spell `IsDefEqStrong Γ …` and need `Params.env` inserted: 11 in SExpr (1044-1046, 1081,
   1334-1335, 1465, 1821, 1827, 1833, 1949), 2 in ShapeLogRel (5055, 5264), 1 in ShapeLogRelAdequacy (48).
   UniqueTyping.lean:141 inducts on it; `E` is a parameter, so it should compile, but it must be rebuilt.
@@ -313,10 +325,35 @@ Re-proof cost:
     off the recursor's major domain `const I us`;
   - `type` := the recursor's body with the major instantiated by that ctor spine;
   - `rhsAbs` maps each same-rank bare leaf occurrence (by RHS position, not by `VExpr`) to its own
-    `self` variable. This is the patleaf code refuter's fix for `node l r`.
+    `self` variable. This is the patleaf code refuter's fix for `node l r`;
+  - `rhs` := the RHS with each path mapped to `bvar (idx path)` and every fixed leaf kept (no self-abstraction);
+    `pat_defeq` is stated with it. Alternative: `rhs` := `rhsAbs` instantiated at the self constants, so (f) follows from (c).
   
   For delta `.const c` the result is `ctx = []`, `lhs = const c params`, `type = ci.type`.
   Being a function, it leaves no junk witnesses (`PatTypedDegenerate.lean` [T]).
+- **`Pattern.gen` spec lemmas** (E3 deliverables, landed by R5; deps of E6, R9, R10; (f) also of E4).
+  `piTelescope`, `PatGen` and `Pattern.gen` go before `class Params`; spec lemmas that use `ctor_syn` or `Pat`
+  ((a), (e)) go after it. For iota
+  `p = app (varN (const rec) m) (varN (const c') n)`, `hg : Pattern.gen env rank classify p r.1 = some g`,
+  `env.constants rec = some ci`, pattern substitution `σ_p` (`σ_p (idx path) = m2 path`):
+  - (a) `gen_head`: `∃ Hs I us Bmaj, Hs.length = m ∧ ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj)`,
+    and `g.ctx = Fs.reverse ++ Hs.reverse`, `Fs` = `c'`'s field telescope (`ctor_syn`) at the parameter variables;
+  - (b) `gen_lhs`: `(mkInst ls g.lhs).subst σ_p = (spine (.const rec ls) Xs).app (spine (.const c' us) Zs)`, i.e. the
+    `openSpine rec ls (m+1)` instance with the major replaced by the ctor spine;
+  - (c) `RHS.toVExpr_subst`, per occurrence: `(mkInst ls g.rhsAbs).subst (selfσ ++ σ_p) = r.1.applyS ls m2`
+    (replaces Measure6.lean:467, whose `self : VExpr → Option Nat`, Measure6.lean:76-80, is keyed by `VExpr`);
+  - (d) `gen_type`: `g.type = Bmaj.inst (spine (.const c' us) fieldVars)` (Bmaj lifted past the `n` field variables);
+  - (e) `gen_arity`, any `Pat` (delta too): `Arity (.const p.head) k p → ∃ Hs B, Hs.length = k ∧ ci.type = Hs.foldr .forallE B`
+    (likewise for `mkInst ls ci.type`). So `Pattern.gen` returns `none` when the head's type has fewer syntactic
+    Π-binders than the pattern arity. Used by `Const.beyond` (R9);
+  - (f) `gen_rhs`: `(mkInst ls g.rhs).subst σ_p = r.1.applyS ls m2` ((c)'s proof with no self variables, or from (c)
+    under the alternative `rhs`). D4 step 5 rewrites `pat_defeq`'s `rhs` with it;
+  - (g) `gen_self`: `g.self.length` is the number of same-rank bare-leaf occurrences of `r.1`. For the j-th one
+    `.fixed (.const c'_j us_j)`, in (c)'s `selfσ` order: `env.constants c'_j = some ci'_j`, `rank c'_j = rank p.head`,
+    `g.self[j] = ci'_j.type.instL us_j`. Then `mkInst ls (g.self[j]) = mkInst (us_j.map (SLevel.instV ls)) ci'_j.type`
+    (`SelfType.lean: mkInst_instL` [T]), which is `ConstGoal`'s type at
+    `mkInst ls (.const c'_j us_j) = .const c'_j (us_j.map (SLevel.instV ls))` (`rfl`). Without (g), `LR.LocalIH` cannot
+    fill `W_p`'s self entries (`Adequate.cons`'s `hA₁`/`hv` are at `mkInst ls (g.self[j])`).
 
 Measure statements:
 ```lean
@@ -349,12 +386,30 @@ theorem LR.const_local {k c₀}
     `ofRargs (x :: rargs)`, so C's IH says nothing, yet the consumer needs the typed `p ≥ x` from `LamDefEq`.
   - Lam case: use `ρ.push p` and move the `Const`/`R` data up with `LE_Interp.mono_l` (3407). `lamDF`'s
     template (ShapeLogRelAdequacy.lean:284-357) does not carry over verbatim.
+  - Lam case, `W'` at `x :: rargs`: `Adequate.cons ihA HA` for the next domain `T` of the constant's type.
+    `Subst1` (ShapeLogRel.lean:6068-6071) wants `TyDefEq` of `T` at every shape; `tyV` gives the Π only at the goal's
+    shape and `TyDefEq` does not go up (`mono_r_2_ty` only goes down), so `tyV` is not enough [A]. Source:
+    `type_below` → `VEnv.IsDefEq.strong` (`rank_ordered`) → `instL` → `mkSE` at `E = env.below rank (rank c)` →
+    rewrite with `hT` → `IsDefEqStrong.telescope` → `weak_append` to `… ++ Γ₀`; `ihA` := WF IH at `rank c < k`,
+    `HA` := `.mono (below_le ..)` (`ForallInvE.lean: forallE_inv'`, `telescope` [T]). Do not use `forallE_inv`
+    (ShapeLogRelAdequacy.lean:492; calls `LR.adequacy` at 486: circular, and it is Π-injectivity) or `exists_below`
+    (Measure6.lean:204: `∃ k`, no bound `< k` for the WF IH).
   - `ihR` becomes `LR.LocalIH` (same-rank bare-constant leaves) plus `LR.WFIH`. The lemma carries the
     semantic type validity `tyV` at every `SubstWF` over `ρ`, layer by layer from `PiDefEq`.
+  - Lam case when `B` is not syntactically `forallE` (Π only after delta: `def f : MyFun := fun x => x`,
+    `MyFun := Nat → Nat`): `hT` cannot be extended to `x :: rargs`. Close it with `Const.beyond`
+    (`Beyond.lean:12-31` [T]: a `Const` derivation at `rargs.length > N` is `⊥`, given ctor, indTy and
+    pattern arities `≤ N`) at `N = Ts.length`; then every `f`-output is `⊥`, `lam' f = ⊥`, `m = ⊥`. Bounds:
+    ctor by `ctor_syn` + `foldr` injectivity for non-`forallE` tails (both telescopes maximal; generalises
+    `foldr_forallE_const_inj` [T]); indTy `k = 0` by `indTy_closed`; pattern by spec lemma (e). Stage 2 (no
+    `indTy_closed`) needs `classify I = indTy k → I's type has k syntactic binders`. Not a measure issue:
+    the IH used is on a direct `Const.lam` premise (`WShapeFun.app_eq`, ShapeLogRel.lean:2320).
 
 **`pat_leaf_1a`, the E6 interface** (R9 calls it at `Const.pat`; R10 proves it). `PatLeafStmt.lean`
 [T as a statement]; stand-ins there: the repo's `LR` for `T.LR`, a variable `rank` for `Params.rank`,
 `IsDefEqStrongE` for R4's `IsDefEqStrong E`, `PatGen` and the `pat_typed`/`pat_defeq` conclusions as hypotheses.
+Round 2 adds `hg`: without it `hty`/`hdef` hold for a junk `g` at every `p r c ci rank`
+(`JunkGen.lean: junkGen_sat` [T]). Amended statement: `PatLeafStmt2.lean:168` [T as a statement; `gen` a variable for `Pattern.gen`].
 ```lean
 def LR.WFIH (Γ₀ : List SExpr) (k : Nat) : Prop :=
   ∀ k' < k, ∀ {Γ M N A}, IsDefEqStrongE (Params.env.below rank k') Γ M N A →
@@ -369,7 +424,7 @@ theorem LR.pat_leaf_1a (WFIH : LR.WFIH rank Γ₀ k) (hc : rank c < k)
     (h1 : Params.env.constants c = some ci) (h2 : ls.length = ci.uvars) (LIH : LR.LocalIH rank Γ₀ ρ₀ c R)
     (hP : Params.Pat p r) (hMt : LE_Interp.Matches p c rargs m2)
     (hRHS : LE_Interp.RHS ls m2 R mC r.1) (hchk : r.2 = .true)
-    (g : PatGen)                                   -- `Pattern.gen … p r.1 = some g`
+    (g : PatGen) (hg : Pattern.gen Params.env rank Params.classify p r.1 = some g)
     (hty : OnCtx (g.self ++ g.ctx) (fun Γ A => (Params.env.below rank (rank c)).IsType ci.uvars Γ A) ∧
       (Params.env.below rank (rank c)).HasType ci.uvars (g.self ++ g.ctx) g.rhsAbs (g.type.liftN g.self.length))
     (hdef : Params.env.IsDefEq ci.uvars g.ctx g.lhs g.rhs g.type)
@@ -384,6 +439,8 @@ theorem LR.pat_leaf_1a (WFIH : LR.WFIH rank Γ₀ k) (hc : rank c < k)
 - `tyV` at every `SubstWF` also covers `σ` with the major replaced by `c' Zs` (step 6).
 - `LR.const_spine` has the same hypotheses with `hC : LE_Interp.Const c ls R rargs mC` in place of `hP … hdef`.
 - The R5 stage-1a fields (`indTy_closed`, `ctor_fields_closed`, `type_below`, `rank_ordered`) enter E6 as section hypotheses.
+- R9 gets `hg` from `Params.pat_gen` (`isSome`). E6/R10 link `g.ctx`, `g.lhs`, `g.rhsAbs`, `g.type`, `g.rhs`,
+  `g.self` to `Ts`, `B`, `openSpine`, `Matches`, `RHS.applyS` and `LR.LocalIH` by spec lemmas (a)-(d), (f), (g).
 
 RHS step, R2 (patleaf C13 with its fixes):
 1. Build `W_p : SubstWF Γ₀ σ_p σ_p' (g.self ++ g.ctx ++ Γ₀) ρ_low` by `Adequate.cons`, starting from
@@ -392,25 +449,62 @@ RHS step, R2 (patleaf C13 with its fixes):
    - recursor-argument entries from the spine lemma's SubstWF (typed `p`s);
    - field entries: `l_i` if it is `⊥` or a ctor shape, else `⊥`; `⊥` for Prop-valued field types.
      `hv` is `FieldRel` at the lowered shape; `hA₁` is the `Const.indTy` leaf (`⊥` for Prop);
-   - self entries from `LR.LocalIH`;
-   - each entry's `ihA` from the WF IH on `pat_typed`'s context typings.
+   - self entries from `LR.LocalIH`, as `rhs_lower`'s `selfs` (step 2); their types match `ConstGoal`'s by (g);
+   - each entry's `ihA` from the WF IH on `pat_typed`'s context typings. Their `HA` live in `env.below …`, while
+     `Adequate.cons` (ShapeLogRelAdequacy.lean:45-50) takes `IsDefEqStrong Params.env`: pass `HA.mono (VEnv.below_le ..)`,
+     or use R7's `hE` form of `Adequate.cons`.
 2. `hM_rhs : LE_Interp ρ_low y' g.rhsAbs`, for the typed goal shape `y'` below the RHS shape, is E6a's
    lowering lemma, by induction on `LE_Interp.RHS` (ShapeLogRel.lean:3316). Every function position has a
    typed upper bound with `HasDom` (fixed leaves via `LE_Interp.const`'s `m'.HasType`, recursor arguments via
    the typed `p`, minor-premise variables via typed entries), so untyped arguments collapse to their typed parts [A].
+   Statement, `RhsLowerStmt.lean:194-226` [T as a statement; there `gen` and `idx` are variables]:
+   ```lean
+   def Valuation.lowerCtx (fields : List TShape) (ρ : Valuation) (m : Nat) : Valuation :=  -- fields, then ρ 1 … ρ m
+     fields.foldr (fun x ρ' => ρ'.push x) <| (List.range m).foldr (fun i ρ' => ρ'.push (ρ (i + 1))) .nil
+   def Valuation.lower (selfs fields : List TShape) (ρ : Valuation) (m : Nat) : Valuation :=  -- ρ_low
+     selfs.foldr (fun x ρ' => ρ'.push x) (Valuation.lowerCtx fields ρ m)
+   theorem T.LR.rhs_lower (LIH : LR.LocalIH Γ₀ ρ₀ c R) (hP : Params.Pat p r)
+       (hMt : LE_Interp.Matches p c rargs m2) (hRHS : LE_Interp.RHS ls m2 R mC r.1)
+       (hg : Pattern.gen Params.env Params.rank Params.classify p r.1 = some g) (idx : p.Path → Nat)
+       (hm : g.ctx.length = fields.length + m)
+       (hfit : (Valuation.lowerCtx fields ρ m).Fits Γ₀ (g.ctx.map (SExpr.mkInst ls) ++ Γ₀))
+       (hvar : ∀ path {n} {y b : WShape n}, y.T ≤ m2 path → y.HasType b →
+         LE_Interp (Valuation.lowerCtx fields ρ m) b.T
+           (SExpr.mkInst ls ((g.ctx.getD (idx path) (.sort .zero)).liftN (idx path + 1))) →
+         y.T ≤ Valuation.lowerCtx fields ρ m (idx path)) :
+       ∃ selfs : List TShape, selfs.length = g.self.length ∧
+         (∀ j s, selfs[j]? = some s → ∃ me c' ls' ci', R me (.const c' ls') ∧ rank c' = rank c ∧
+           Params.env.constants c' = some ci' ∧ ls'.length = ci'.uvars ∧ me ≤ s ∧
+           SExpr.mkInst ls (g.self.getD j (.sort .zero)) = SExpr.mkInst ls' ci'.type ∧
+           (∃ k (x b : WShape k), s = x.T ∧ x.HasType b ∧ LE_Interp ρ₀ b.T (SExpr.mkInst ls' ci'.type)) ∧
+           LR.ConstGoal Γ₀ ρ₀ s c' ls' ci') ∧
+         ∀ {n'} {y' a' : WShape n'}, y'.T ≤ mC → y'.HasType a' →
+           LE_Interp (Valuation.lower selfs fields ρ m) a'.T (SExpr.mkInst ls (g.type.liftN g.self.length)) →
+           LE_Interp (Valuation.lower selfs fields ρ m) y'.T (SExpr.mkInst ls g.rhsAbs)
+   ```
+   - `idx` is `Pattern.gen`'s path ↦ `g.ctx` index (`σ_p (idx path) = m2 path`); `hfit`/`hvar` are the typed-entry facts.
+   - `selfs` is existential because each occurrence's shape lives inside `hRHS`; it gives `W_p`'s self entries (step 1).
+   - The `a'`-interprets-`g.type` premise is needed: without it an untyped field `l_i = sort` (`UntypedField.lean`)
+     admits a typed `y' = sort` above the lowered entry `⊥` [A].
    - Not from the raw `m''`: `RHS.var` (3319) needs `ρ ≥ m''`, which conflicts with typed entries.
    - The type shape for `g.type` comes from `soundS` at `ρ_low` (which `Fits`), not from the raw codomain shape.
-   - Fallback (b): type ctor fields in `Shape.hasType`, as the artifact does (`succ v : nat` needs `v : nat`,
-     artifact Shape.lean:3121-3125). It changes the shape algebra; re-check `mono_l`, `lift`, `join`.
+   - Fallback (b): type ctor fields in `Shape.hasType` (2493), as the artifact does (`succ v : nat` needs `v : nat`,
+     artifact Shape.lean:3121-3125). It changes the shape algebra; re-check `mono_l`, `lift`, join (3030),
+     `HasTypeU.ctor`/`WShape.HasType.unfold` (2518, 2867, 2890) and `WShape.HasType.ctor'` (2902), which becomes
+     conditional. `ctor'` is used unconditionally in `build_spine` (5026), whose `hpath` field shapes are
+     unconstrained (4980-4988), and `build_spine` feeds `strongSoundS`'s `extra` case (5256): re-check soundness
+     (4980-5050). If (b) is chosen, an R item lands it before R9.
 3. Adequacy of `rhsAbs` comes from the WF IH at `rank head` on `pat_typed`, via `rank_ordered` +
    `VEnv.IsDefEq.strong` + `instL` + `mkSE`. This is the `EnvStrongR.of_params` pattern (Measure6.lean:298 [T, given MkSE]).
    The derivation lives in the closed context `g.self ++ g.ctx`; weaken it to `… ++ Γ₀` at `E = env.below …`.
-   `IsDefEqStrong.weak0` (SExpr.lean:1426) only handles `[]`. The general case is a new ~20-line lemma
-   via R4's E-version of `IsDefEqStrong.weak'` (`WeakE.lean: IsDefEqStrongE.weak'` [T]) with a `Ctx.Lift'`
-   that skips the tail.
-4. Rewrite with `toVExpr_subst` (Measure6.lean:467 [T]).
+   `IsDefEqStrong.weak0` (SExpr.lean:1426) only handles `[]`. The general case is `IsDefEqStrong.weak_append`
+   (item R4), a new ~20-line lemma via R4's E-version of `IsDefEqStrong.weak'` (`WeakE.lean: IsDefEqStrongE.weak'` [T])
+   with a `Ctx.Lift'` that skips the tail. R10 needs it because `SubstWF.id`'s base is `Γ₀` (ShapeLogRel.lean:6074).
+4. Rewrite with the per-occurrence `RHS.toVExpr_subst` (spec lemma (c), E3 → R5); Measure6.lean:467 [T] is only its
+   template (keyed by `VExpr`).
 5. Typed `whr`: `rec Xs x ≡ rec Xs (c Zs)` by `appDF` with the clause's typed `x ≡ c Zs : I`;
-   then `rec Xs (c Zs) ≡ rhs` by `pat_defeq` + `IsDefEq.subst` (SExpr.lean:2038, `⊢ Γ₀` from `W.wf₀`).
+   then `rec Xs (c Zs) ≡ rhs` by `pat_defeq` + `IsDefEq.subst` (SExpr.lean:2038, `⊢ Γ₀` from `W.wf₀`), with `rhs`
+   rewritten to `r.1.applyS ls m2` by spec lemma (f).
    Untyped: `pat_leaf_reduce` (Measure6.lean:452 [T]).
 6. `conv` from `motive (c Zs)` to `motive x` by `PiDefEq.1` of the recursor's type at `(c Zs, x)`,
    which needs that typed equation.
@@ -507,43 +601,63 @@ Why each change:
   - `mono_*`, `lift`, `left`/`symm`/`trans`, which only copy the conjunct.
 - **Fallback if E1 fails:** the artifact's full design. `bot : a.HasType .type → TyDefEq A A a → DefEq M N A .bot a`,
   `AmbSort` at every `m`, and an `isType` field (LogRel.lean:63-84).
+- Simp lemmas broken by D6 (E1 re-proves, R1 lands): `LRS.DefEq.sort_a` (5637, `rfl`) becomes false (⊥ split +
+  `AmbSort`), used at 5769, 5806. `LRS.TyDefEq.sort_iff` (5444) and `LRS.DefEq.lam_forallE` (5639) change
+  statement, used at 5725, 5777, 5837, 5856, 6043 and ShapeLogRelAdequacy.lean:272, 325. All three are
+  `@[simp]`, so plain `simp` calls may use them too [A].
 
 ---
 
 ## 2. Ordered work items
 
 "Scratch" means the item can be done independently against `/tmp/utt-snap6`, in parallel.
-"Build" means `lake build Lean4Lean.Experimental` is green. "Tracer" means `lake env lean scripts/TraceSorry.lean`.
+"Build" means `lake build Lean4Lean.Experimental` is green. "Tracer" means `lake env lean scripts/TraceSorry.lean`;
+its first block is the `IsDefEq'.uniq` root. `lake build` alone is no check: CI treats `sorry` as a warning
+(.github/workflows/ci.yml:33-36). In scratch files, `traceSorries [X]` means `scripts/TraceSorry.lean:6-29` copied in.
 
 | id | file / definitions | statement or content | lines | deps | verify | risk | scratch |
 |---|---|---|---|---|---|---|---|
-| **E1** | `synth/TypedLR.lean` (copy of ShapeLogRel.lean:5272-6117 and ShapeLogRelAdequacy.lean:8-146 in a scratch namespace `T`) | D6 exactly as in §1; re-prove `LR0`, the `LRS` instance (19 fields), `LR.lift_succ_aux`, `LR.DefEq.lift`, `LR.TyDefEq.lift`; re-check `LR.Subst1`/`SubstWF`, `Adequate`, `Adequate.cons`, `toValTy`, `Adequate.mono_r` (transcription: their LR-field uses keep their signatures) | ~1 150 (mostly copied), ~200 changed | – | `#print axioms` of `T.LR0`, `T.LRS`, `T.LR.DefEq.lift`, `T.LR.TyDefEq.lift`, `T.LR.SubstWF.symm`, `T.LR.Adequate.cons`, `T.LR.Adequate.mono_r`: no `sorryAx` | med | yes, **first** |
-| E2 | same file | wire D1/D2 into E1's `LRS.DefEq`/`TyDefEq` using `CtorClause1a.lean`; re-prove the fields at the new cases | ~200 | E1 | E1's axiom list again: no `sorryAx` | low | yes |
-| E3 | `synth/Measure7.lean` (port of `Measure.lean`) | drop `Block`; `rank ≤` motive; ∃-typed-upper-bound motive; `Pattern.gen` with per-occurrence self; `const_local` up to the spine-lemma sorry | ~450 | – | only the marked spine/13-case sorries | med | yes |
-| E4 | `synth/NatParamsA.lean` | N over `envA`: λ-`extra_patV` with the open typed equations (strip 3 binders for the zero rule, 4 for succ), `rank`, `pat_gen`/`pat_typed`/`pat_defeq` for both rules (`Pattern.gen` checked by `rfl` at those counts) | ~300 | E3 (`Pattern.gen` draft) | `#print axioms` of the instance: `sorryAx` only via `ctor_sort_nat`, `iotaSuccLam_wf`, `iotaZeroLam_wf` | low-med | yes |
-| E5 | `synth/LamRules.lean` (on E1) | `extra` cases of `strongSoundS` and `LR.adequacy` for `Δ.foldr .lam` rules; the adequacy part on E1's typed `T.LR`, each beta layer by `typed_beta_rule` from D5's open equation | ~250 | E1 | `#print axioms` of `T.strongSoundS_extra_lam`, `T.adequacy_extra_lam`: no `sorryAx` | med | yes |
-| E6a | `synth/FieldLower.lean` (on E1+E2) | field-entry typing for the pat leaf (D4 steps 1-2). Default (a): lowered valuation `ρ_low` and the lowering lemma `T.LR.rhs_lower` (`LE_Interp ρ_low y' g.rhsAbs` for typed `y'` below the RHS shape, by induction on `LE_Interp.RHS`). Fallback (b): typed ctor fields in `Shape.hasType`, then re-check `mono_l`/`lift`/`join` | ~200 | E1, E2, E3 | `#print axioms T.LR.rhs_lower`: no `sorryAx` | high | yes |
-| E6 | `synth/PatLeaf1a.lean` (on E1+E2) | `T.LR.pat_leaf_1a`, statement as in D4 (`PatLeafStmt.lean`): prove the pat-leaf goal (D4 steps 1-6) | ~350 | E1, E2, E3, E6a | `#print axioms T.LR.pat_leaf_1a`: no `sorryAx` | **high** | yes |
-| R1 | ShapeLogRel.lean 5272-6066 | D6 from E1; lands with R2 as one green commit | ~200 changed | E1 | `lake build Lean4Lean.Experimental.ShapeLogRel` (ShapeLogRelAdequacy stays red until R2) | med | no |
-| R2 | ShapeLogRelAdequacy.lean (13 cases, `forallE_whRed_l`/`forallE_inv`/`sort_inv` 476-515), UniqueTyping.lean | typed `whr` callers (346, 353, 356, 436, 456, 474); `sort_iff` (183, 514); `WHNF.*.whRedS` on what is now `TyRedS` (274, 488, 495, 498, 515); `.rfl` ambient producers (327, 383, 396, 411); `whr_t.determ` (453); the other ambient producers (D6); `LogRelBase.TyDefEq.sort` (ShapeLogRel.lean:5300, now via `sort_iff_ty`) | ~150 | R1 | build; tracer still shows only `LR.adequacy` | med | no |
-| R3 | ShapeLogRel.lean (`TyDefEq` 5438, `DefEq` 5619, simp lemmas 5661-5662, instance, `lift_succ_aux` 6011) | D1/D2 from E2. Same commit: mark `docs/const-case/{Stuck,Subst1,CtorClause,Fuel}.lean` historical (checked at 3c35f59) and drop them from its `check.sh`/README, because R3 adds `LRS.CtorDefEq` (clash with CtorClause.lean:34) and falsifies `LR.trivial_at_indTy` (Subst1.lean:51); R5's `RHS.fixedLeaves` clashes with Fuel.lean:12 | ~250 | R1, E2 | build; `docs/const-case/check.sh` | low | no |
-| R4 | SExpr.lean (`IsDefEqStrong` 1046, its local notation 1044-1045, `⊢ₛ` notation 1334-1335, `closedN` 1367, `weak'` 1387, `weak0` 1426, `CtorProvider` 1805, `mkS` 1818; new defs before `class Params`, 37); ShapeLogRel.lean 5055, 5264; ShapeLogRelAdequacy.lean:48; UniqueTyping.lean:141 (rebuild) | `(E : VEnv)` parameter, `mono`; `closedN`/`weak'`/`weak0` for `hE : E ≤ Params.env`; `VExpr.OnConsts`, `VDefEq.OnConsts`, `rankBound`, `onConsts_rankBound`, `OnConsts.mono`/`mono_k`, `VEnv.below` + lemmas (all before `class Params`); `exists_below`, `mkSE`, `CtorProviderE`/`synE` | ~350 | – | build; `#print axioms IsDefEq.strong` unchanged | low | no: after R2 (it edits ShapeLogRel and ShapeLogRelAdequacy too), or rebase |
-| R5 | SExpr.lean (before `class Params`, 37) + Pattern.lean | `piTelescope`, `PatGen`, `Pattern.gen`, `RHS.fixedLeaves`; the D4/D3 Params fields | ~200 | R4 | `lake build`, `lake build Lean4Lean.Tests`, `lake build Lean4Lean.Experimental` (Pattern.lean is in `Lean4Lean.Theory`, imported by Theory/Typing/ChurchRosser, Theory/Typing/UniqueTyping, Experimental/NormalEq); `docs/params/check.sh` (after R12) | med | partly (E3/E4) |
-| R6 | SExpr.lean `extra_patV` (59), `Params.extra_pat` (1006); ShapeLogRel 5229-5260; Adequacy 466-474 | D5 λ-restatement (with the typed open equation) and the re-proofs, from E5 | ~250 | R5, R7, E5 | build; tracer unchanged | med | via E5 |
-| R7 | ShapeLogRelAdequacy.lean | `LR.adequacy_rank` (WF on k, `induction H`); `.mono` at ~25 sub-derivation uses and at the rebuilt `.lamDF` (296), `.beta` (435), `.eta` (440-441), `.extra` (469) before `soundS`; env membership via `VEnv.below_le` at 195 (`henv.closedC h1`), 470 (`henv.closed.2 h1`), 473 (`extra_pat Γ₀ h1 h2`); `LR.adequacy` from it | ~150 | R2, R4, R5 | build; tracer first block: `constants directly containing sorry (1): Lean4Lean.SExpr.LR.adequacy_rank` | low | no |
-| R8 | ShapeLogRelAdequacy.lean | `EnvStrongR` (rank-bounded strong typings from `type_below`/`pat_typed`), `LR.WFIH`/`ConstGoal`/`LocalIH`, `LR.const_local` (D4); `LR.const_spine` stated, body `sorry`; wire the const case to `const_local` at `c₀ := c` (moved here from R11) | ~280 | R5, R7, E3 | build; tracer: `(1): …LR.const_spine` | med | via E3 |
-| R9 | ShapeLogRelAdequacy.lean | `LR.const_spine` (D4 statement): induction on `Const` (bot; lam at `ρ.push p` for `LamDefEq`'s typed `p`, data moved by `LE_Interp.mono_l`; ctor → `CtorDefEq` with typed refl; indTy → D2; pat → `LR.pat_leaf_1a`, stated, body `sorry`). Use `spine` (SExpr.lean:2288), not a port of `apps` (Measure6:429 clashes with Stuck.lean:15) | ~400 | R3, R8 | build; tracer: `(1): …LR.pat_leaf_1a` | med-high | no |
-| R10 | ShapeLogRelAdequacy.lean | `LR.pat_leaf_1a` (D4 steps 1-6) from E6a + E6 | ~400 | R9, E6 | build; tracer: `constants directly containing sorry (0)`, axioms `Classical.choice`, `Quot.sound`, `propext` | high | via E6 |
+| **E1** | `synth/TypedLR.lean` (copy of ShapeLogRel.lean:5272-6117 and ShapeLogRelAdequacy.lean:8-515 in a scratch namespace `T`; the const case stays `sorry`) | D6 exactly as in §1; re-prove `LR0`, the `LRS` instance (19 fields), `LR.lift_succ_aux`, `LR.DefEq.lift`, `LR.TyDefEq.lift`, the D6 simp lemmas (`sort_a`, `TyDefEq.sort_iff`, `lam_forallE`); re-check `LR.Subst1`/`SubstWF`, `Adequate`, `Adequate.cons`, `toValTy`, `Adequate.mono_r` (transcription: their LR-field uses keep their signatures); apply R2's edit list to the copied 13 cases and `forallE_whRed_l`/`forallE_inv`/`sort_forallE_inv`/`sort_inv` (148-515), i.e. every D6 ambient producer | ~1 520 (mostly copied), ~350 changed | – | `#print axioms` of `T.LR0`, `T.LRS`, `T.LR.DefEq.lift`, `T.LR.TyDefEq.lift`, `T.LR.SubstWF.symm`, `T.LR.Adequate.cons`, `T.LR.Adequate.mono_r`: no `sorryAx`; `traceSorries [T.LR.adequacy]` and `traceSorries [T.forallE_inv, T.sort_inv]`: `constants directly containing sorry (1): T.LR.adequacy` (the const case) | med | yes, **first** |
+| E2 | same file | wire D1/D2 into E1's `LRS.DefEq`/`TyDefEq` using `CtorClause1a.lean`; re-prove the fields at the new cases, and `LRS.TyDefEq.left/symm/trans` (ShapeLogRel.lean:5453-5484: `split <;> try trivial` must now prove D2's indTy case; the instance's `left_ty`/`symm_ty`/`trans_ty` are these, 5672) | ~200 | E1 | E1's axiom list again: no `sorryAx` | low | yes |
+| E3 | `synth/Measure7.lean` (port of `Measure.lean`) | drop `Block`; `rank ≤` motive; ∃-typed-upper-bound motive; `Pattern.gen` with per-occurrence self and its spec lemmas (a)-(g) (D4), (c) being the per-occurrence `RHS.toVExpr_subst`; E-versions of `IsDefEqStrong.forallE_inv'` and `telescope` (`ForallInvE.lean` [T]; D4 spine-lemma lam case); `const_local` up to the spine-lemma sorry; use `WeakE.lean`'s sorry-free `weak0'`, not Measure6's sorried `IsDefEqStrongE.weak0` (Measure6.lean:199-201) | ~600 | – | `traceSorries [LR.const_local]` (E3's own namespace: E3 does not build on E1): exactly the `const_spine` stub; `#print axioms` of spec lemmas (a)-(g), `forallE_inv'`, `telescope`: no `sorryAx` | med | yes |
+| E4 | `synth/NatParamsA.lean` | scratch `structure ParamsR` mirroring the post-R5/R6 class, because snap6's `Params` still has the old `extra_patV` (SExpr.lean:59-62), false for `envA` for every `Pat` (NatParams.lean:233): snap6's fields minus the old `extra_patV`, plus λ-`extra_patV`, `rank`, `rank_ordered`, `type_below`, `pat_rank`, `pat_gen`, `pat_typed`, `pat_defeq`, `pat_check`, `indTy_closed`, `ctor_fields_closed` (this pins R5's field list). `natParamsR : ParamsR` over `envA`, NatParams.lean's definitions copied (docs files are not importable): λ-`extra_patV` with the open typed equations (strip 3 binders for the zero rule, 4 for succ), `rank`, `pat_gen`/`pat_typed`/`pat_defeq` for both rules (`Pattern.gen` checked by `rfl` at those counts; `pat_defeq` through spec lemma (f)) | ~350 | E3 (`Pattern.gen` draft, spec lemma (f)) | `traceSorries [natParamsR]`: exactly `ctor_sort_nat` (restated over `envA`), `iotaSuccLam_wf`, `iotaZeroLam_wf`, plus any new deliberate sorry, named in this row (none planned) | low-med | yes |
+| E5 | `synth/LamRules.lean` (on E1) | D5's λ-`extra_patV` as an explicit hypothesis `ExtraPatVLam` (snap6's field is the old one). `extra` cases of `strongSoundS` and `LR.adequacy` for `Δ.foldr .lam` rules. `T.strongSoundS_extra_lam` is the `extra` case of `strongSoundS` (ShapeLogRel.lean:5229-5260) as a standalone lemma, statement `ExtraLamStmt.lean:25` [T as a statement]; `strongSoundS` (5055) is outside E1's copy and `StrongSoundEq` (4633) does not use `LR`, so this part needs no E1. The adequacy part edits E1's copied `extra` case (ShapeLogRelAdequacy.lean:466-474) on the typed `T.LR`, each beta layer by `typed_beta_rule` from D5's open equation | ~250 | E1 | `#print axioms T.strongSoundS_extra_lam`: no `sorryAx`, statement as `ExtraLamStmt.lean:25`; `traceSorries [T.LR.adequacy]` still `(1): T.LR.adequacy` | med | yes |
+| E6a | `synth/FieldLower.lean` (on E1+E2) | field-entry typing for the pat leaf (D4 steps 1-2). Default (a): lowered valuation `ρ_low` (`Valuation.lower`) and the lowering lemma `T.LR.rhs_lower` (D4 step 2; `LE_Interp ρ_low y' g.rhsAbs` for typed `y'` below the RHS shape, by induction on `LE_Interp.RHS`). Fallback (b): typed ctor fields in `Shape.hasType`, then re-check D4 step 2's list (`mono_l`, `lift`, join 3030, `HasTypeU.ctor`/`unfold` 2518/2867/2890, `WShape.HasType.ctor'` 2902, `build_spine`/`strongSoundS` 4980-5050); if (b) is chosen, insert an R item for it before R9 | ~200 | E1, E2, E3 | `#print axioms T.LR.rhs_lower`: no `sorryAx`, statement as `RhsLowerStmt.lean:207` (D4 step 2) with `gen` := `Pattern.gen` and `idx` := its path map | high | yes |
+| E6 | `synth/PatLeaf1a.lean` (on E1+E2) | `T.LR.pat_leaf_1a`, statement as in D4 (with `hg`, `PatLeafStmt2.lean`): prove the pat-leaf goal (D4 steps 1-6; step 2 is `T.LR.rhs_lower`, `RhsLowerStmt.lean:207`) via spec lemmas (a)-(d), (f), (g) | ~350 | E1, E2, E3, E6a | `#print axioms T.LR.pat_leaf_1a`: no `sorryAx` | **high** | yes |
+| R1 | ShapeLogRel.lean 5272-6066; docs/const-case/ (check.sh, README.md, plan/README.md, every `.lean`) | D6 from E1, including the D6 simp lemmas (5444, 5637, 5639) and their uses; lands with R2 as one green commit, which also does the docs pinning (below the table) | ~200 changed | E1 | `lake build Lean4Lean.Experimental.ShapeLogRel` (ShapeLogRelAdequacy stays red until R2) | med | no |
+| R2 | ShapeLogRelAdequacy.lean (13 cases, `forallE_whRed_l`/`forallE_inv`/`sort_inv` 476-515), UniqueTyping.lean | typed `whr` callers (346, 353, 356, 436, 456, 474); `sort_iff` (183, 514); `WHNF.*.whRedS` on what is now `TyRedS` (274, 488, 495, 498, 515); `.rfl` ambient producers (327, 383, 396, 411); `whr_t.determ` (453); the other ambient producers (D6); `LogRelBase.TyDefEq.sort` (ShapeLogRel.lean:5300, now via `sort_iff_ty`). A transcription of E1's copy | ~150 | R1 | build; tracer still shows only `LR.adequacy` | med | via E1 |
+| R3 | ShapeLogRel.lean (`TyDefEq` 5438, `LRS.TyDefEq.left/symm/trans` 5453-5484, `DefEq` 5619, simp lemmas 5661-5662, instance, `lift_succ_aux` 6011) | D1/D2 from E2, including D2's indTy case in `LRS.TyDefEq.left/symm/trans` (E2). The docs experiments are already pinned (R1+R2) | ~250 | R1, E2 | build; tracer first block `constants directly containing sorry (1)`, unchanged by the commit (`Lean4Lean.SExpr.LR.adequacy` before R7, `…LR.adequacy_rank` after R7, `…LR.const_spine` after R8) | low | no |
+| R4 | SExpr.lean (`IsDefEqStrong` 1046, its local notation 1044-1045, `⊢ₛ` notation 1334-1335, `hasTypeS`/`hasType'`/`isType'`/`hasType` 1338-1365, `closedN` 1367, `weak'` 1387, `weak0` 1426, `forallE_inv'` 1433, `CtorProvider` 1805, `mkS` 1818; new defs before `class Params`, 37); ShapeLogRel.lean 5055, 5264; ShapeLogRelAdequacy.lean:48; UniqueTyping.lean:141 (rebuild) | `(E : VEnv)` parameter, `mono`; `closedN`/`weak'`/`weak0` for `hE : E ≤ Params.env`; `VExpr.OnConsts`, `VDefEq.OnConsts`, `rankBound`, `onConsts_rankBound`, `OnConsts.mono`/`mono_k`, `VEnv.below` + lemmas (all before `class Params`); `exists_below`, `mkSE`, `CtorProviderE`/`synE`; `IsDefEqStrong.hasTypeS`/`hasType'`/`isType'`/`hasType` (1338-1365) and `forallE_inv'` (1433) for any `E`, with no `hE` (proofs unchanged; `⊢ₛ` over a section variable `E` for these lemmas, or an `{E}` binder on each): the first four are `mkSE`'s deps (`MkSE.lean` [T]); `IsDefEqStrong.telescope : IsDefEqStrong E Γ (Ts.foldr .forallE B) _ (.sort u) → TelStrongE E Γ Ts B` (each domain and the codomain strongly typed in its own telescope context; `ForallInvE.lean` [T]; D4 spine-lemma lam case); `IsDefEqStrong.weak_append (hE : E ≤ Params.env) : IsDefEqStrong E Δ e1 e2 A → IsDefEqStrong E (Δ ++ Γ₀) e1 e2 A` (from the E-versions of `weak'` and `closedN`; D4 step 3); `E`-variants of `IsDefEqStrong.defeq` and `LE_Interp.soundS` taking `(hE : E ≤ Params.env)` (via `H.mono hE`), so R7 needs no `.mono` rebuilds | ~420 | – | build; `#print axioms IsDefEq.strong` unchanged; tracer first block: `constants directly containing sorry (1): Lean4Lean.SExpr.LR.adequacy` | low | no: after R2 (it edits ShapeLogRel and ShapeLogRelAdequacy too), or rebase |
+| R5 | SExpr.lean (defs before `class Params`, 37; spec lemmas using `ctor_syn`/`Pat` after it) + Pattern.lean | `piTelescope`, `PatGen`, `Pattern.gen` (`none` when the head's type has fewer syntactic Π-binders than the pattern arity), its spec lemmas (a)-(g) from E3 (incl. `gen_arity`, the per-occurrence `RHS.toVExpr_subst`, `gen_rhs`, `gen_self`), `RHS.fixedLeaves`; the D4/D3 Params fields exactly as E4's `ParamsR`. E6 can still force a field change | ~300 | R4, E3, E4 | `lake build`, `lake build Lean4Lean.Tests`, `lake build Lean4Lean.Experimental` (Pattern.lean is in `Lean4Lean.Theory`, imported by Theory/Typing/ChurchRosser, Theory/Typing/UniqueTyping, Experimental/NormalEq); tracer first block: `constants directly containing sorry (1): Lean4Lean.SExpr.LR.adequacy`; `docs/params/check.sh` (after R12) | med | partly (E3/E4) |
+| R6 | SExpr.lean `extra_patV` (59), `Params.extra_pat` (1006); ShapeLogRel 5229-5260; Adequacy 466-474; docs/params/Schema.lean, check.sh | D5 λ-restatement (with the typed open equation) and the re-proofs, from E5. Same commit: retire `docs/params/Schema.lean` (its `no_lam_rule`, 15-20, destructures the old `extra_patV` and is false by design): "historical, checked at 3c35f59" header, and drop it from `docs/params/check.sh:6`'s loop | ~250 | R5, R7, E5 | build; tracer unchanged | med | via E5 |
+| R7 | ShapeLogRelAdequacy.lean | `LR.adequacy_rank` (WF on k, `induction H`); ~48 sub-derivation uses (28 `soundS`, 20 `.defeq` in 148-475) and the rebuilt `.lamDF` (296), `.beta` (435), `.eta` (440-441), `.extra` (469) pass `hE` to R4's `E`-variants of `soundS`/`defeq` (no `.mono` rebuilds); env membership via `VEnv.below_le` at 195 (`henv.closedC h1`), 470 (`henv.closed.2 h1`), 473 (`extra_pat Γ₀ h1 h2`); `Adequate.cons ihA HA` at 321 (lamDF) and 373 (forallEDF), where `HA` is now an `env.below` derivation and `Adequate.cons` (45-50) takes `Params.env`: pass `HA.mono (VEnv.below_le ..)`, or give `Adequate.cons` an `(hE : E ≤ Params.env)` form that uses R4's `E`-variants of `soundS`/`defeq` internally (52-62); `LR.adequacy` from it | ~150 | R2, R4, R5 | build; tracer first block: `constants directly containing sorry (1): Lean4Lean.SExpr.LR.adequacy_rank` | low | no |
+| R8 | ShapeLogRelAdequacy.lean | `EnvStrongR` (rank-bounded strong typings from `type_below`/`pat_typed`), `openSpine`, `Valuation.ofRargs` (from CtorClause.lean:102-106 / PatLeafStmt.lean:102-107), `LR.WFIH`/`ConstGoal`/`LocalIH`, `LR.const_local` (D4); `LR.const_spine` stated, body `sorry`; wire the const case to `const_local` at `c₀ := c` (moved here from R11) | ~280 | R5, R7, E3 | build; tracer: `(1): …LR.const_spine` | med | via E3 |
+| R9 | ShapeLogRelAdequacy.lean | `LR.const_spine` (D4 statement): induction on `Const` (bot; lam at `ρ.push p` for `LamDefEq`'s typed `p`, data moved by `LE_Interp.mono_l`; lam case's `W'` via `Adequate.cons` on the next domain, its derivation by D4's `telescope` chain (not `forallE_inv`/`exists_below`); ctor → `CtorDefEq` with typed refl; indTy → D2; pat → `LR.pat_leaf_1a` with `hg` from `Params.pat_gen`, stated, body `sorry`). Lam case with `B` not syntactically `forallE`: `Const.beyond` (D4; `Beyond.lean` [T]) from `ctor_syn` + `foldr` injectivity, `indTy_closed`, spec lemma (e). Use `spine` (SExpr.lean:2288), not a port of `apps` (Measure6:429 clashes with Stuck.lean:15) | ~430 | R3, R8, E3 (spec lemmas, via R5) | build; tracer: `(1): …LR.pat_leaf_1a` | med-high | no |
+| R10 | ShapeLogRelAdequacy.lean | `LR.pat_leaf_1a` (D4 steps 1-6) from E6a + E6; `Adequate.cons` calls with `HA.mono (VEnv.below_le ..)` or R7's `hE` form | ~400 | R9, E6, E3 (spec lemmas (a)-(d), (f), (g), via R5) | build; tracer: `constants directly containing sorry (0)`, axioms `Classical.choice`, `Quot.sound`, `propext` | high | via E6 |
 | R11 | – | milestone gate (wiring moved to R8): `lake build`, `lake build Lean4Lean.Experimental`, `lake build Lean4Lean.Tests`, tracer | – | R10 | tracer: **no `sorryAx` under `IsDefEq'.uniq`** | low | no |
-| R12 | docs/params/EmptyParams.lean, NatParams.lean, check.sh | new fields (trivial for empty); N over `envA` from E4; `check.sh` asserts the sorry-warning count and E4's axiom list (today it only greps `error`, and NatParams has 3 deliberate sorries) | ~350 | R5, R6, E4 | `docs/params/check.sh` | low-med | via E4 |
-| R13 | STATUS.md §3/§5/§6, docs/const-case/ | record D6, the stage-1a scope (whole-environment restriction, D3), `WHRedS.defeq` *not* needed, quotients excluded; fix STATUS §6 "`./check.sh` typechecks the experiments" (historical since R3); move this plan to `docs/const-case/PLAN.md` | ~80 | R11 | read | – | no |
+| R12 | docs/params/EmptyParams.lean, NatParams.lean, check.sh | new fields (trivial for empty); N over `envA` from E4; `check.sh` asserts the sorry-warning count and E4's `traceSorries` list (today it only greps `error`, and NatParams has 3 deliberate sorries); its loop is `EmptyParams NatParams` (Schema retired at R6) | ~350 | R5, R6, E4 | `docs/params/check.sh` | low-med | via E4 |
+| R13 | STATUS.md §3/§4/§5/§6, docs/const-case/, docs/params/README.md | record D6, the stage-1a scope (whole-environment restriction, D3), `WHRedS.defeq` *not* needed, quotients excluded; STATUS §4: `IsDefEq.strong`'s signature (R4 adds `E`); §5: field list (`rank`, `rank_ordered`, `type_below`, `pat_rank`, `pat_gen`, `pat_typed`, `pat_defeq`, `pat_check`, `indTy_closed`, `ctor_fields_closed`), λ-`extra_patV` as landed (no longer open), the stage-1a restriction; §6 item 3 (measure done, no new `const` premise); docs/params/README.md (N over `envA`, new fields); fix STATUS §6 "`./check.sh` typechecks the experiments" (historical since R1); sync `docs/const-case/PLAN.md` (in the repo since 1710175) with this plan | ~120 | R11 | read | – | no |
 | S1 | (after milestone) ShapeS.ctor + ~55 shape declarations + `Const.ctor`/`Matches.app`/`build_spine` | stage 1b (D1); drop `ctor_fields_closed` | 800-1200 | R11 | build + tracer | high | partly |
 | S2 | (after S1) | stage 2 (D2/D3 routes); drop `indTy_closed`, `pat_check` | open | S1 | – | open | – |
 
-Critical path: E1 → R1+R2 → R7 → R8 → R9 → R10 → R11, gated by R4 → R5 (before R7), E3 (before R8),
+**Docs pinning (in the R1+R2 commit).** 1710175 added ~33 experiments to `docs/const-case/check.sh:11-16` (10 top-level
+files plus `plan/*.lean`) and `Schema` to `docs/params/check.sh:6`; written against 3c35f59, they break from R1 on.
+- Pin `docs/const-case/`: every experiment gets a "historical, checked at 3c35f59" header and leaves the `check.sh` loops,
+  or `check.sh` runs `lake env lean` inside a `git worktree` of 3c35f59 (needs a one-time build there [A]).
+  Update `docs/const-case/README.md:30` and `plan/README.md:7` ("`../check.sh` typechecks them all") to match.
+- Breakage (name clash or changed signature) [R]: R1+R2: `plan/CtorClause1a.lean:17,19` (`TyRedS`, `TWHRedS`),
+  `plan/TypedWhr.lean:24,32` (`inst_congr_beta`, `LRS.LamDefEq.whr_typed`), `plan/WeirdLR.lean:34-38` (old
+  `sort_iff`/`sort_iff_ty`/`whr` types), `plan/NaiveMono.lean:52-54`, `plan/RealisedC.lean:57-59` (`sort_iff.2` without
+  `AmbSort`/`TyRedS`), `plan/KappaMonoR1.lean:68`; R3: `plan/CtorClause1a.lean:48`, `CtorClause.lean:34`, `Subst1.lean:51`;
+  R4: `Measure.lean:13,44,204`, `plan/WeakE.lean:13,44,177`, `plan/PatLeafStmt.lean:13,44`; R5: `Measure.lean:69`,
+  `plan/WeakE.lean:69`, `plan/PatLeafStmt.lean:49`, `Fuel.lean:12`; R6: `docs/params/Schema.lean:15-20` (R6 retires it),
+  `plan/LamRuleTyped.lean`; R8: `plan/PatLeafStmt.lean:102-126`, `Measure.lean` (`EnvStrongR`), `CtorClause.lean:102,106`;
+  R9/R10: `plan/PatLeafStmt.lean:132,154`.
+
+Critical path: E1 → R1+R2 → R7 → R8 → R9 → R10 → R11, gated by R4 → R5 and E3 → E4 → R5 (before R7),
 E2 → R3 (before R9) and E6a → E6 (before R10).
-- Off the critical path: R6 and R12 (λ-rules and the N instance), E4, E5; R13 after R11.
-- Rough size of the stage-1a milestone: ~2 500 repo lines and ~2 950 scratch lines (mostly copied).
+- Off the critical path: R6 and R12 (λ-rules and the N instance), E5; R13 after R11.
+- Rough size of the stage-1a milestone: ~2 690 repo lines and ~3 500 scratch lines (mostly copied).
 
 ---
 
@@ -551,13 +665,14 @@ E2 → R3 (before R9) and E6a → E6 (before R10).
 
 **Claim tested.** D6 can be added to lean4lean's existing LR (shapes `bot`/`sort`/`forallE`/`lam`;
 `ctor`/`indTy` still `True`) while keeping the `bot`, `conv`, `symm`, `trans`, `trans'`, `mono_*`,
-`join_ty` and `toType` signatures, with all 19 fields and the lift lemma re-proved.
+`join_ty` and `toType` signatures, with all 19 fields and the lift lemma re-proved, and that the 13
+adequacy cases produce every new ambient conjunct (§4 Q2).
 
 **Procedure.**
-1. Copy `ShapeLogRel.lean:5272-6117` and `ShapeLogRelAdequacy.lean:8-146` into `synth/TypedLR.lean` under `namespace Lean4Lean.SExpr.T`.
-2. Add `TyRedS`/`TWHRedS`/`AmbSort` (§1 D1/D6) and apply the D6 edits.
+1. Copy `ShapeLogRel.lean:5272-6117` and `ShapeLogRelAdequacy.lean:8-515` into `synth/TypedLR.lean` under `namespace Lean4Lean.SExpr.T` (const case stays `sorry`).
+2. Add `TyRedS`/`TWHRedS`/`AmbSort` (§1 D1/D6), apply the D6 edits, and apply R2's edit list to the copied adequacy cases.
 3. Reuse `LRS.LamDefEq.whr_typed` and `inst_congr_beta` (`TypedWhr.lean`).
-4. Re-prove until no `sorry` is left; check the E1 axiom list (§2).
+4. Re-prove until only the const-case `sorry` is left; check the E1 axiom list and tracer (§2).
 
 **Outcomes.**
 - The fields to watch are `whr` (sort and lam cases), `whr_ty`, `conv` (lam case), `mono_l` at `(m ≠ ⊥, sort)`,
@@ -565,8 +680,8 @@ E2 → R3 (before R9) and E6a → E6 (before R10).
 - If any of them cannot be proved, D6-as-specified is false. Switch to the artifact's full design
   (`bot` with a `TyDefEq A A a` hypothesis, `isType`). That adds a `TyDefEq A A a` obligation at each
   of the 15 `bot`/`Adequate.bot` call sites in ShapeLogRelAdequacy.lean.
-- If E1 passes, R1 is a transcription and the remaining D6 risk is R2.
-- Cost: 1-2 days, scratch only, no other item needed.
+- If E1 passes, R1 and R2 are transcriptions.
+- Cost: 2-3 days, scratch only, no other item needed.
 
 E6a then E6 (the pat-leaf dry run) are the second experiment. They test whether D1 + D4 + D5 together
 supply everything the pat leaf consumes, untyped field shapes included.
@@ -577,7 +692,7 @@ supply everything the pat leaf consumes, untyped field shapes included.
 
 1. **Can `bot` stay unchanged under D6?** (E1, R2.) Fallback: the artifact's `bot`/`isType` design (§3).
 2. **Do the 13 cases supply `AmbSort`/`TyRedS` at every producer** of `(m ≠ ⊥, sort)` and `(lam, forallE)`?
-   [A: yes; the list of producers is under D6.] Fallback: as in 1.
+   [A: yes; the list of producers is under D6.] Tested by E1 on a copy of the 13 cases. Fallback: as in 1.
 3. **Constructor universe levels in iota rules.** `Pattern.Matches.app` discards the argument
    pattern's levels (Pattern.lean:78-82: `app` keeps `f1`, drops `f2`), so `rec.{us} … (c.{us'} …)` matches for any `us'`.
    `Pattern.gen` reads `us'` off the recursor's major domain, and the clause's shared `ls` ties the ambient
@@ -638,9 +753,36 @@ supply everything the pat leaf consumes, untyped field shapes included.
 - r1 #12, D4 spine lemma/R9/§4 Q7: spine lemma stated at every `ρ ≥ ofRargs rargs` covered by a `SubstWF`; lam case via `ρ.push p` + `LE_Interp.mono_l`.
 - r1 #13, §0.5/D3/D4 fields/§5: stage-1a fields stated as a whole-environment restriction; Prop fields at `⊥` (chosen over a `u ≠ 0` field); the other new fields recorded as kernel invariants [A].
 - r1 #14, D5 + table/E4: 3 binders (zero rule), 4 (succ rule).
+- r2 #1, D4 `pat_leaf_1a`/E3/E6/R9/R10: `hg : Pattern.gen … = some g` added (`JunkGen.lean`; amended statement `PatLeafStmt2.lean:168`); `Pattern.gen` spec lemmas (a)-(e) written in D4 as E3 deliverables, deps of E6/R9/R10; D4 step 4 uses (c), not Measure6.lean:467.
+- r2 #2, R4/R5/R8/D4 step 3: `IsDefEqStrong.weak_append` named and owned by R4; `openSpine`/`Valuation.ofRargs` in R8; per-occurrence `RHS.toVExpr_subst` in R5 (E3 draft).
+- r2 #3, §2 preamble + verify of R3/R4/R5/E3/E4 (and R12's wording): tracer checks instead of build-only; E3 `traceSorries [LR.const_local]`; E4 `traceSorries [natParams]` = the 3 named sorries (see notes).
+- r2 #4, E1/R2/E5/§3/§4 Q2: E1 copies ShapeLogRelAdequacy.lean:148-515 and runs R2's edits there; R2 a transcription (scratch via E1); E5 edits the copied `extra` case; sizes and cost updated.
+- r2 #5, R5 deps/critical path: R5 deps R4, E3, E4; E3 → E4 → R5 on the critical path; E4 removed from the off-path list.
+- r2 #6, D4 step 2 fallback (b)/E6a: re-check list extended (2518, 2867, 2890, 2902, 3030, 4980-5050, 5026, 5256); R item before R9 if (b).
+- r2 #7, D6/E1/R1/R4/R7: three D6 simp lemmas listed with uses; R7 count ~48 (28 + 20) via R4's `hE` variants (the amendment's second option).
+- r2 #8, R13: STATUS §4/§5/§6 item 3 and docs/params/README.md added (see notes).
+- r2 #9, D4 spine lemma/R9/R5: `Const.beyond` (`Beyond.lean` [T]) for the non-syntactic-Π lam case; `Pattern.gen` returns `none` below the pattern arity, `gen_arity` = spec lemma (e) (merged with #1(e)); stage-2 indTy bound noted.
+- r3 #1, R1/R3/R6/R12/R13 + new "Docs pinning" paragraph: all docs experiments pinned to 3c35f59 in the R1+R2 commit (header or `git worktree`), READMEs updated; R3 loses its docs step and `check.sh` verify; R6 retires `Schema.lean` and drops it from `docs/params/check.sh`; R12's loop is `EmptyParams NatParams`; R13 "historical since R1".
+- r3 #2, R4/D4 re-proof cost: `hasTypeS`/`hasType'`/`isType'`/`hasType` (1338-1365) for any `E`, no `hE`, as `mkSE`'s deps; size ~65 + ~20 (`MkSE.lean`); R4 ~420 lines (with #8).
+- r3 #3, R7/R10/D4 step 1: `Adequate.cons ihA HA` at 321/373 gets `HA.mono (VEnv.below_le ..)`, or an `hE` form of `Adequate.cons`; same in R10 and step 1.
+- r3 #4, E4/E5/R5: E4 builds a scratch `ParamsR` (post-R5/R6 field list) and `natParamsR` over `envA`, verify `traceSorries [natParamsR]`; R5's fields = `ParamsR`; E5 takes `ExtraPatVLam` as a hypothesis, `T.strongSoundS_extra_lam` pinned at `ExtraLamStmt.lean:25` [T as a statement].
+- r3 #5, D4 PatGen/spec lemmas/E3/E4/E6/R5/R10: `rhs` defined; spec lemma (f) `gen_rhs` (dep of E4, E6, R10; used in step 5); Params-dependent spec lemmas placed after `class Params`.
+- r3 #6, D4 step 2/E6a/E6: `Valuation.lowerCtx`/`Valuation.lower` and the `T.LR.rhs_lower` statement written in D4, typechecked as a statement (`RhsLowerStmt.lean:194-226`); E6a's verify and E6's step 2 cite `RhsLowerStmt.lean:207` (see notes).
+- r3 #7, R3/E2: `LRS.TyDefEq.left/symm/trans` (5453-5484) added to R3's file list and E2's re-proof list.
+- r3 #8, D4 spine lemma/R4/R9/E3: lam-case domain derivation via `type_below` → `strong` → `instL` → `mkSE` → `telescope` → `weak_append`; `forallE_inv'` (1433) env-generic and `IsDefEqStrong.telescope` in R4 and E3 (`ForallInvE.lean`); `forallE_inv`/`exists_below` ruled out there.
+- r3 #9, D4 spec lemmas/step 1/E3/E6/R5/R10: spec lemma (g) `gen_self` (`SelfType.lean: mkInst_instL`), deps of E6/R10.
 
 ### Audit notes
 
 - r1 #1: its evidence "no `lam_inv` in Theory/" is wrong: `VEnv.HasType.lam_inv` exists (Theory/Typing/Strong.lean:784). It types the body at some type only, so the gap stands (#10).
 - r1 #4: cited lines were off. Actual: `henv.closedC h1` 195 (not 189), `henv.closed.2 h1` 470 (not 469), rebuilt `.lamDF` 296 (not 328), `.eta` 440-441 (not 443/445), `.extra` 469 (not 472); `class Params` is at SExpr.lean:37 (not 41).
 - r1 #6: cited lines were off. Actual: `WHNF.forallE.whRedS red` 274 (not 281-283), `.rfl` producers 327/383/396/411 (not 331, 391-419), `whr_t.determ` 453 (not 446-447); 495, 498 and 515 also break.
+- r2 #3: `T.LR.const_local` is wrong: E3 has no E1 dependency, so its `const_local` is not in `T`. R3's tracer constant depends on when R3 lands (it may follow R7/R8), so its check is "unchanged by the commit". Measure6's `IsDefEqStrongE.weak0` (199-201) is a sorry that `const_local` would reach; E3 must use `WeakE.lean`'s.
+- r2 #6: the ctor clause of `Shape.hasType` is line 2493, not 2494 (2494 is `indTy, sort`); D1's citation fixed too.
+- r2 #7: chose the `hE`-variant option, built as `H.mono hE` (one line each) rather than re-proved by induction.
+- r2 #8: the repo moved past 3c35f59 to 1710175 (docs only). There STATUS §6 item 3 already says no new `const` premise (STATUS.md:233-244) and the plan is already at `docs/const-case/PLAN.md`. The cited lines (110-115, 146-180, 224-229) are 3c35f59's. R13 still has to update all four places after the milestone.
+- r3 (all): every cited file:line checked at HEAD/3c35f59; the evidence files `MkSE.lean`, `ForallInvE.lean`, `SelfType.lean` re-run at `/tmp/utt-snap6`: no errors, no sorry, axioms as claimed.
+- r3 #1: the `git worktree` option needs its own build of 3c35f59 (oleans); the header option is cheaper. STATUS §6's sentence goes false at R1, but the fix keeps it in R13, as amended.
+- r3 #2: `MkSE.lean:103`'s `mkSE` takes no `hE` (only `hctor`); D4's signature keeps `hE`, which is harmless. `hasType` is at 1364.
+- r3 #5/#9: both proposed the label (f); `gen_rhs` is (f), `gen_self` is (g).
+- r3 #6: the pinned statement adds to the amendment's sketch: `selfs` is existential (each occurrence's shape is inside `hRHS`, so the caller cannot name it), it returns the self-entry facts `W_p` needs, and it has a premise that `a'` interprets `g.type` (else an untyped field shape `sort` breaks the bound [A]). `idx` (path ↦ `g.ctx` index) is a variable until `Pattern.gen` exists.
