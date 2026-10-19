@@ -13,7 +13,13 @@
 >
 > **E1 passed (2026-10-19).** Two independent attempts, each independently verified: D6 holds
 > for the whole `LogRel` block and for all 13 proven cases of `LR.adequacy`, with no fallback
-> needed. Report and files: `plan/E1/`. R1+R2 (the transcription into the real files) follow.
+> needed. Report and files: `plan/E1/`. **R1+R2 landed** as `c6b258f` (all sixteen Experimental
+> modules, `lake build` and `lake build Lean4Lean.Tests` green; tracer unchanged), with the docs
+> pinning step as `0fadc0c`. Line numbers in this document are still `3c35f59`'s. After R1+R2,
+> `ShapeLogRel.lean` is 99 lines longer (6117 → 6216) and `ShapeLogRelAdequacy.lean` 47 lines
+> longer (515 → 562); the shift is not uniform (for example `LRS.TyDefEq` 5438 → 5485, `LRS.DefEq`
+> 5619 → 5696, `LR` 5903 → 5996; `LR.adequacy` 148 → 149, its sorry 196 → 198, `forallE_whRed_l`
+> 476 → 522), so look anchors up by name.
 
 
 Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.

@@ -43,8 +43,8 @@ form the route:
 | file | lines | what it is |
 |---|---|---|
 | `SExpr.lean` | ~3000 | `SExpr`: the same syntax with universe levels quotiented semantically (`SLevel`). `SExpr.IsDefEq` is the same rule set **plus one rule** `trans'`: transitivity where the middle term may sit at a different sort. The `Params` class (§5) bundles the environment and the pattern data. Lines ~1046–2115 are this fork's port of `Theory/Typing/Strong.lean` (`IsDefEqStrong`, `Ctx.WF`, `CtxStrong`, `EnvStrongS`, `IsDefEq.strong`). `IsDefEq.mkS` (line ~903) translates `VEnv.IsDefEq` into `SExpr.IsDefEq`. |
-| `ShapeLogRel.lean` | ~6100 | A finitary domain model ("shapes", `WShape`), the interpretation of terms into it (`LE_Interp`, line ~3333), and a logical relation over it (`LogRel`, `LRS.DefEq`, `LRS.TyDefEq`). This is the Lean form of [*Definitional Inversion, Without Normalisation*](https://arxiv.org/abs/2607.13662) (Carneiro, Coquand, Frabetti Mathieu, Lennon-Bertrand, Melliès, Weirich, 2026), extended with constants, constructor shapes and pattern rules. No normalisation is used anywhere; Lean's theory is not normalising. |
-| `ShapeLogRelAdequacy.lean` | ~515 | The fundamental lemma `LR.adequacy`, and from it Pi-injectivity `forallE_inv`, sort injectivity `sort_inv` and sort/Pi disjointness `sort_forallE_inv`, all for the `trans'` system. |
+| `ShapeLogRel.lean` | ~6200 | A finitary domain model ("shapes", `WShape`), the interpretation of terms into it (`LE_Interp`, line ~3333), and a logical relation over it (`LogRel`, `LRS.DefEq`, `LRS.TyDefEq`). This is the Lean form of [*Definitional Inversion, Without Normalisation*](https://arxiv.org/abs/2607.13662) (Carneiro, Coquand, Frabetti Mathieu, Lennon-Bertrand, Melliès, Weirich, 2026), extended with constants, constructor shapes and pattern rules. No normalisation is used anywhere; Lean's theory is not normalising. |
+| `ShapeLogRelAdequacy.lean` | ~560 | The fundamental lemma `LR.adequacy`, and from it Pi-injectivity `forallE_inv`, sort injectivity `sort_inv` and sort/Pi disjointness `sort_forallE_inv`, all for the `trans'` system. |
 | `UniqueTyping.lean` | ~390 | Unique typing for the `trans'` system by plain induction (`HasTypeS.uniq`); `uniq_sort`; `IsDefEq.iff_isDefEq'`, showing `trans'` is admissible, so the `trans'` system equals `IsDefEq'`, which has exactly Lean's rules; the final corollary; and reflection of sort injectivity and sort/Pi disjointness back to `VExpr`. |
 
 The final theorem, for `SExpr` and under a well-formed context, exactly as
@@ -66,7 +66,7 @@ Building from scratch: install [elan](https://github.com/leanprover/elan);
 the toolchain is pinned in `lean-toolchain` (`v4.33.0-rc2`, a release
 candidate) and Batteries in `lake-manifest.json`, which the first build
 downloads. The first build compiles Batteries, the `Theory` library and the
-6100-line logical relation; expect several minutes. Later builds of the route
+6200-line logical relation; expect several minutes. Later builds of the route
 take about a minute. Warnings about `sorry` are expected: the `#print axioms`
 lines in the route files run at build time.
 
@@ -146,6 +146,12 @@ green too. The tracer is not yet a pass/fail CI check (a good first task, §8).
 - `LR.Adequate.mono_r` (`ShapeLogRelAdequacy.lean`): retype an `Adequate` fact
   down to a compatible shape, a port of the artifact's lemma that every
   const-case design uses (`3c35f59`).
+- Typed reductions in the logical relation (`TyRedS`, `TWHRedS`, `AmbSort`;
+  the `sort_iff`, `sort_iff_ty`, `whr`, `whr_ty` fields take typed reductions,
+  `(⊥, ·)` stays `True`; the other fifteen fields and every statement in
+  `ShapeLogRelAdequacy.lean` are unchanged), with the 13 proven cases of
+  `LR.adequacy` re-proved over it: plan item D6, landed as R1+R2 after
+  experiment E1 (`c6b258f`). The tracer output is identical before and after.
 
 ## 5. What is assumed: the `Params` class
 
@@ -187,8 +193,8 @@ rule). These are limitations of the current model, not of the route.
 
 ## 6. The open problem: the `const` case of `LR.adequacy`
 
-`LR.adequacy` (`ShapeLogRelAdequacy.lean`, line ~148; the sorry is in the
-`const` case near line 196) is proven by induction on the strong derivation;
+`LR.adequacy` (`ShapeLogRelAdequacy.lean`, line ~150; the sorry is in the
+`const` case near line 198) is proven by induction on the strong derivation;
 13 of its 14 cases are done. The `const` case has been a sorry since the
 model started interpreting constants non-trivially (April 2026). Three
 independent design analyses on this fork, a five-lens adversarial review of
@@ -242,16 +248,16 @@ the ordered work items are in `PLAN.md`).
    give the rank, the rank-bounded typing of constant types and of each rule's
    right-hand side in a computed pattern context (`Pattern.gen`), and the rule
    as a definitional equality (`pat_defeq`). Skeleton: `Measure.lean`.
-4. **Typed reductions in the relation.** All three designs missed this. At
+4. **Typed reductions in the relation** (done, `c6b258f`). All three designs missed this. At
    the pattern leaf the rule's right-hand side has type `motive (c Zs)` and
    the goal has type `motive x` with `x ⤳* c Zs`; converting between them at
    a Π result shape needs a *typed* `Γ ⊢ x ≡ c Zs : I`. The untyped `whr`
    field cannot supply it, and subject reduction (`WHRedS.defeq`) is a sorry
-   whose `VExpr` twin already reaches `sorryAx`. So `whr` and `whr_ty` become
+   whose `VExpr` twin already reaches `sorryAx`. So `whr` and `whr_ty` are now
    typed (`TWHRedS`, `TyRedS`), `(⊥, ·)` stays `True`, and the hard case, a
    typed `whr` at `(lam, forallE)`, goes through without a `⊢ Γ` index
-   (`docs/const-case/plan/TypedWhr.lean`). This is the plan's main bet and the first thing to
-   test (E1 below).
+   (`LRS.LamDefEq.whr_typed`). This was the plan's main bet; experiment E1
+   tested it and R1+R2 landed it.
 5. **`extra_patV` on λ-telescopes.** Lean4Lean's rules are λ-closed schemas
    (§5). The restated field strips the binders and, the audit found, must
    also carry the rule's open typed equation `Δ ⊢ L ≡ R : T`: each typed beta
@@ -282,7 +288,11 @@ fallback was needed; subject reduction was not used. Forced side changes:
 `LR0.DefEq` takes the ambient type, the simp lemma `LRS.DefEq.sort_a` splits
 in two, `LRS.LamDefEq.whr` becomes typed. Report and files:
 `docs/const-case/plan/E1/`. The transcription into `ShapeLogRel.lean` and
-`ShapeLogRelAdequacy.lean` (plan items R1+R2) is next.
+`ShapeLogRelAdequacy.lean` (plan items R1+R2) landed as `c6b258f`; the eleven
+`docs/` experiments that were written against the untyped fields are marked
+historical (`0fadc0c`). Next on the plan's critical path: E3 (the rank measure and
+`Pattern.gen`), E2/R3 (the stage-1a constructor clause), E6a/E6 (the pattern
+leaf).
 
 **Known risks** (`PLAN.md` §4 and its audit log). The shape-level iota match
 binds a field variable to the raw field shape, and a constructor shape counts
