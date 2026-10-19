@@ -5052,7 +5052,7 @@ theorem LE_Interp.build_spine {m1 : p.Path → TShape} {m2} (a2 : p.MatchesS LHS
           |>.lift k'.le_succ .mono
 
 /-- Soundness of the strong judgment for the logical relation. -/
-theorem LE_Interp.strongSoundS (H : IsDefEqStrong Γ M N A) : StrongSoundEq Γ M N A := by
+theorem LE_Interp.strongSoundS (H : IsDefEqStrong Params.env Γ M N A) : StrongSoundEq Γ M N A := by
   induction H with
   | @bvar _ i A _ h h2 ih =>
     refine .rfl ⟨.bvar h, fun _ _ W _ h => ?_, .bvar h, .rfl⟩; clear h2 ih
@@ -5261,9 +5261,14 @@ theorem LE_Interp.strongSoundS (H : IsDefEqStrong Γ M N A) : StrongSoundEq Γ M
 theorem LE_Interp.strongSound (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A) : StrongSoundEq Γ M N A :=
   strongSoundS (H.strong hΓ)
 
-theorem LE_Interp.soundS (H : IsDefEqStrong Γ M N A) (W : Valuation.Fits Γ₀ Γ ρ) {m} :
+theorem LE_Interp.soundS (H : IsDefEqStrong Params.env Γ M N A) (W : Valuation.Fits Γ₀ Γ ρ) {m} :
     (LE_Interp ρ m M ↔ LE_Interp ρ m N) ∧ (LE_Interp ρ m M → InterpTyped ρ m M A) :=
   ⟨(strongSoundS H).sound W, (strongSoundS H).left.sound W⟩
+
+theorem LE_Interp.soundSE {E : VEnv} (hE : E ≤ Params.env) (H : IsDefEqStrong E Γ M N A)
+    (W : Valuation.Fits Γ₀ Γ ρ) {m} :
+    (LE_Interp ρ m M ↔ LE_Interp ρ m N) ∧ (LE_Interp ρ m M → InterpTyped ρ m M A) :=
+  soundS (H.mono hE) W
 
 theorem LE_Interp.sound (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A) (W : Valuation.Fits Γ₀ Γ ρ) {m} :
     (LE_Interp ρ m M ↔ LE_Interp ρ m N) ∧ (LE_Interp ρ m M → InterpTyped ρ m M A) :=
