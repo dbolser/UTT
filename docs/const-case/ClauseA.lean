@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before the typed logical relation (docs/const-case/PLAN.md D6, landed by R1+R2); no longer compiles.
 /-! Lens 1 (clause) experiment, the recommended clause of DESIGN-ctor-code-shape.md with codes as
 finite data: `SpineTyped`, `SpineDefEq`, `CtorDefEq`, and the LogRel-field proofs that depend on
 the clause's form (`left`, `symm`, `conv`, `trans`, `mono`, `lift_aux` both ways, `whr`).

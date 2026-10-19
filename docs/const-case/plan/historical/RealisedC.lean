@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before the typed logical relation (docs/const-case/PLAN.md D6, landed by R1+R2); no longer compiles.
 /-! Refuter check of claim C1 (analyst lens `clause`).
 
 `CounterC.lean` shows the per-field conjunct of design C fails at level 2 for the lifted field

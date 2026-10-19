@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before the typed logical relation (docs/const-case/PLAN.md D6, landed by R1+R2); no longer compiles.
 /-! Refuter (proof, lens clause), experiment 1.
 CounterC.lean's configuration, but checked against design C's FULL clause
 (`LRS.CtorArgsEq`, copied verbatim from docs/const-case/CtorClause.lean), not the isolated field

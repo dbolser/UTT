@@ -75,6 +75,14 @@ The plan's own evidence files (the typed-reduction lemmas, the stage-1a clause
 over an abstract `IH`, the audit counterexamples) are in `plan/`; see
 `plan/README.md`.
 
+**Historical experiments.** `CounterC.lean`, `ClauseA.lean` and the files in
+`plan/historical/` were typechecked at `3c35f59` and stopped compiling when the
+typed logical relation landed (plan items R1+R2): they use the old untyped
+`whr`/`sort_iff` fields, or define `TyRedS`/`TWHRedS` themselves, which now live
+in `ShapeLogRel.lean`. Each carries a `-- historical:` line after its import.
+Their claims concern the earlier relation and are kept for the record;
+`check.sh` skips them.
+
 References to `/tmp/utt-snap*`, `/tmp/utt-exp/...` and
 `/tmp/utt-ref/paper-artifacts/...` in the documents are build snapshots of this
 tree, scratch directories, and a local copy of the paper's supplementary Lean

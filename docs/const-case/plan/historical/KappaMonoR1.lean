@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before the typed logical relation (docs/const-case/PLAN.md D6, landed by R1+R2); no longer compiles.
 
 /-! Refutation of C9/C11 (design κ): `LogRel.mono_r_1` is FALSE at `indTy` under κ as specified.
 

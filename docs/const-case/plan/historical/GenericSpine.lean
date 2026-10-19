@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before the typed logical relation (docs/const-case/PLAN.md D6, landed by R1+R2); no longer compiles.
 /-! Refuter (proof, lens clause), experiment 2.
 ClauseA's `SpineDefEq` is stated over the CONCRETE tower `LR Γ`, and its `conv`/`symm`/`trans`
 use `LRS.TyDefEq.forallE_iff` at level `n+1` plus `LR.TyDefEq.lift (Nat.le_succ n)` (a theorem

@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before the typed logical relation (docs/const-case/PLAN.md D6, landed by R1+R2); no longer compiles.
 /-! Refuter scratch (patleaf lens).
 (a) `pat_typed` (Measure.lean `RankParams.pat_typed`) existentially quantifies `Γp Tp idx self`
     with no link to the rule's telescope.  For an iota RHS of the form `minor x`

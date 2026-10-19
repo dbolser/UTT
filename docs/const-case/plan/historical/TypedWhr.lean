@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before the typed logical relation (docs/const-case/PLAN.md D6, landed by R1+R2); no longer compiles.
 /-! Synthesizer probes for decision D6 (typed reductions), against HEAD 3c35f59 (/tmp/utt-snap6).
 
 (1) `TyDefEq_forallE_typed`: relating two Π types at a Π type-shape forces the TYPED

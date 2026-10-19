@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before the typed logical relation (docs/const-case/PLAN.md D6, landed by R1+R2); no longer compiles.
 /-! Refuter check of claim C8 (B's naive ∃-type-shape field clause fails `mono_l`).
 The analyst only typechecked the shape fact (`HasType` not downward closed in the element).
 Here the full per-field failure: for the closed field `Xr := λ (_ : Prop → Prop). Type` of type

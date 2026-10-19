@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before the typed logical relation (docs/const-case/PLAN.md D6, landed by R1+R2); no longer compiles.
 /-! Lens 1, experiment 1: design C's field clause (universal over `LE_Interp`-valid type shapes,
 "Subst1 form") is NOT level-invariant: `LR.DefEq.lift` (⇐ direction) fails for it.
 
