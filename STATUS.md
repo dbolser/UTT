@@ -146,6 +146,11 @@ green too. The tracer is not yet a pass/fail CI check (a good first task, §8).
 - `LR.Adequate.mono_r` (`ShapeLogRelAdequacy.lean`): retype an `Adequate` fact
   down to a compatible shape, a port of the artifact's lemma that every
   const-case design uses (`3c35f59`).
+- The stage-1a constructor clause of the plan (`LRS.CtorDefEq` at
+  `(ctor c l, indTy)`, `TyDefEq` at `indTy` as a typed reduction to one
+  `const I ls`), with every `LogRel` field and the lift lemmas re-proved at
+  the new cases and `ShapeLogRelAdequacy.lean` unchanged (plan D1/D2, item R3,
+  after experiment E2; `2c5a205`). The tracer output is identical.
 - Typed reductions in the logical relation (`TyRedS`, `TWHRedS`, `AmbSort`;
   the `sort_iff`, `sort_iff_ty`, `whr`, `whr_ty` fields take typed reductions,
   `(⊥, ·)` stays `True`; the other fifteen fields and every statement in
@@ -215,7 +220,7 @@ happen. With the relation unchanged the lemma is false, not merely unproven
 **What has to change** (the plan's decisions; Lean statements, evidence and
 the ordered work items are in `PLAN.md`).
 
-1. **A constructor clause** in `LRS.DefEq` at `(m = ctor c l, a = indTy)`:
+1. **A constructor clause** (stage 1a done, `2c5a205`) in `LRS.DefEq` at `(m = ctor c l, a = indTy)`:
    both terms head-reduce, *with a typed equation*, to `c` applied to a spine
    whose fields are related at the shapes in `l`. This is the paper's
    treatment of `ℕ`; its Lean mechanisation (supplementary material at
@@ -229,9 +234,10 @@ the ordered work items are in `PLAN.md`).
    canonical type shape `indTy`, which works when every field type is a
    closed inductive constant (`ℕ`, `Bool`, `Int`, monomorphic lists and
    trees), and changes no shape definition; stage 1b adds the Π-codes. The
-   stage-1a clause's field obligations typecheck over an abstract relation
-   (`docs/const-case/plan/CtorClause1a.lean`). `TyDefEq` at `indTy` becomes "both types
-   reduce, typed, to the same `const I ls`".
+   stage-1a clause is in (`LRS.CtorDefEq`, `LRS.FieldRel`, `LRS.FieldsEq`;
+   experiment E2, `docs/const-case/plan/E2/`), with all 19 fields and the
+   lift lemmas re-proved and the adequacy cases untouched. `TyDefEq` at
+   `indTy` is now "both types reduce, typed, to the same `const I ls`".
 2. **A `major` rule** in `SExpr`'s `WHRed` (reduction in major-premise
    position), so a recursor whose argument merely *reduces* to a constructor
    can fire. Done (`b2516c4`), together with the syntactic spine lemmas and
@@ -290,9 +296,10 @@ in two, `LRS.LamDefEq.whr` becomes typed. Report and files:
 `docs/const-case/plan/E1/`. The transcription into `ShapeLogRel.lean` and
 `ShapeLogRelAdequacy.lean` (plan items R1+R2) landed as `c6b258f`; the eleven
 `docs/` experiments that were written against the untyped fields are marked
-historical (`0fadc0c`). Next on the plan's critical path: E3 (the rank measure and
-`Pattern.gen`), E2/R3 (the stage-1a constructor clause), E6a/E6 (the pattern
-leaf).
+historical (`0fadc0c`). The stage-1a constructor clause followed the same
+route (experiment E2, two verified attempts, then R3 as `2c5a205`). Next on the
+plan's critical path: E3 (the rank measure and `Pattern.gen`) and R4 (the
+environment-indexed strong judgment), then E6a/E6 (the pattern leaf).
 
 **Known risks** (`PLAN.md` §4 and its audit log). The shape-level iota match
 binds a field variable to the raw field shape, and a constructor shape counts

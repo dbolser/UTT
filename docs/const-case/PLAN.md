@@ -20,6 +20,9 @@
 > longer (515 → 562); the shift is not uniform (for example `LRS.TyDefEq` 5438 → 5485, `LRS.DefEq`
 > 5619 → 5696, `LR` 5903 → 5996; `LR.adequacy` 148 → 149, its sorry 196 → 198, `forallE_whRed_l`
 > 476 → 522), so look anchors up by name.
+>
+> **E2 passed and R3 landed (2026-10-19, `2c5a205`).** Two verified attempts; report and modules in
+> `plan/E2/`. `ShapeLogRel.lean` is now 6474 lines; `ShapeLogRelAdequacy.lean` needed no change.
 
 
 Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.
