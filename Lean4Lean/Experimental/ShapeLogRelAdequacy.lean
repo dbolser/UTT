@@ -5,6 +5,7 @@ namespace Lean4Lean
 namespace SExpr
 variable [Params]
 
+
 def LR.Adequate (Γ₀ Γ : List SExpr) (ρ : Valuation) (M N A : SExpr) (m a : WShape n) :=
   (∀ {{σ σ'}}, LR.SubstWF Γ₀ σ σ' Γ ρ →
     (LR Γ₀).DefEq (M.subst σ) (M.subst σ') (A.subst σ) m a ∧
@@ -180,7 +181,7 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
       ⟨fun _ _ _ => ⟨this, this⟩, fun _ _ => this⟩
     cases hmem.unfold with
     | bot hm => exact (LR _).bot hm
-    | sort => exact (LR _).sort_iff.2 ⟨_, .rfl, .rfl⟩
+    | sort => exact (LR _).sort_iff.2 ⟨⟨_, _, .sort⟩, _, .sort, .sort⟩
     | _ =>
       obtain h | h := WShape.le_sort.1 hM.le_sort'
       · dsimp only at h; rw [h]; exact (LR _).bot hmem.isType
@@ -193,6 +194,7 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
     suffices ∀ {σ}, (LR Γ₀).DefEq (const c ls) (const c ls) ((mkInst ls ci.type).subst σ) m a
       from ⟨fun _ _ _ => ⟨this, this⟩, fun _ _ => this⟩
     intro σ; rw [(Params.henv.closedC h1).mkInstS.subst_eq .zero]; clear σ
+    -- the `const` case: the open problem (STATUS.md §6, docs/const-case/PLAN.md)
     sorry
   | @appDF Γ A u B v F F' X X' _ _ Hf Ha HBa _ _ ihf iha ihBa =>
     cases hM with | bot => exact .bot hmem.isType | @app _ nf_app f _ _ _ x hif hia le_m
@@ -271,7 +273,7 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
       unfold WShape.lam' at hAf; split at hAf
       · rw [LRS.DefEq.lam_forallE] at hAf
         obtain ⟨_, _, _, _, red, _, _, _, _, valPi⟩ := hAf
-        cases WHNF.forallE.whRedS red
+        cases WHNF.forallE.whRedS red.2
         have le' := (TShape.LE.def (Nat.succ_le_succ hk.2.2) (Nat.succ_le_succ hk.2.1)).1 le
         simp only [WShape.T, WShape.lift_forallE hk.2.2, WShape.lift_forallE hk.2.1,
           WShape.forallE_le_forallE] at le'
@@ -284,18 +286,22 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
   | @lamDF Γ A A' u B v body body' HA HB HBody HBody' ihA ihB ihBody =>
     suffices ∀ {X Y X' Y' σ σ'},
         LE_Interp ρ m.T (.lam X Y) → SubstWF Γ₀ σ σ' Γ ρ →
+        -- D6: typings of both lambdas, for the typed beta steps below
+        Γ ⊢ A ≡ X : .sort u → X::Γ ⊢ Y : B → Γ ⊢ A ≡ X' : .sort u → X'::Γ ⊢ Y' : B →
         (∀ {k np} {p : WShape np} {mb ab : WShape k},
           (ρ.push p.T).Fits Γ₀ (A :: Γ) →
           LE_Interp (ρ.push p.T) mb.T Y → LE_Interp (ρ.push p.T) ab.T B → mb.HasType ab →
           Adequate Γ₀ (A :: Γ) (ρ.push p.T) Y Y' B mb ab) →
         (LR Γ₀).DefEq (.subst (.lam X Y) σ) (.subst (.lam X' Y') σ')
           (.subst (.forallE A B) σ) m a by
-      refine ⟨fun σ σ' W => ⟨?_, ?_⟩, fun σ W => this hM W fun _ => ihBody⟩
-      · exact this hM W fun _ hMb hBb hmb => (ihBody hMb hBb hmb).left
-      · refine this ?_ W fun W hMb' hBb hmb => ?_
+      have tA := HA.defeq.hasType.1; have tb := HBody.defeq.hasType.1
+      have tb' := HBody'.defeq.hasType.2
+      refine ⟨fun σ σ' W => ⟨?_, ?_⟩, fun σ W => this hM W tA tb HA.defeq tb' fun _ => ihBody⟩
+      · exact this hM W tA tb tA tb fun _ hMb hBb hmb => (ihBody hMb hBb hmb).left
+      · refine this ?_ W HA.defeq tb' HA.defeq tb' fun W hMb' hBb hmb => ?_
         · exact (LE_Interp.soundS (.lamDF HA HB HBody HBody') W.fits).1.1 hM
         · exact (ihBody ((LE_Interp.soundS HBody W).1.2 hMb') hBb hmb).symm.left
-    intro X Y X' Y' σ σ' hTerm W IH
+    intro X Y X' Y' σ σ' hTerm W HX HY HX' HY' IH
     suffices ∀ n' b (f : WShapeFun _), n = n' + 1 → a ≍ (.forallE b f : WShape (n'+1)) →
         (LR Γ₀).DefEq (.subst (.lam X Y) σ) (.subst (.lam X' Y') σ')
           (.subst (.forallE A B) σ) m a by
@@ -324,7 +330,8 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
     rename_i hlam; subst hg
     simp only [LR, LRS, LRS.DefEq.lam_forallE]
     have aty := WShape.HasTypePi.iff.1 aty
-    refine ⟨A.subst σ, B.subst σ.lift, u, v, .rfl, hTypA, ?_, hTypB, ?_, ?_⟩
+    refine ⟨A.subst σ, B.subst σ.lift, u, v, ⟨⟨_, .forallEDF hTypA hTypB⟩, .rfl⟩, hTypA, ?_, hTypB,
+      ?_, ?_⟩
     · exact (LR Γ₀).left_ty <| toValTy le_n le_a aty.1.isType hSort hmem'
         ((ihA hA' hSort hmem').2 W.left)
     · simp [LRS.PiDefEq, inst_lift_cons]
@@ -336,6 +343,22 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
       exact toValTy le le' (aty.2 _ hp).toType iv hmb ((ihB iB iv hmb).1 W').1
     have beta {X Y t : SExpr} {σ} : Γ₀ ⊢ .app (.lam (X.subst σ) (Y.subst σ.lift)) t ⤳*
         Y.subst (σ.cons t) := inst_lift_cons (x := t) ▸ .tail .rfl .beta
+    -- D6: typed beta steps, from the body typings `HY`/`HY'` (substituted) and `IsDefEq.beta`
+    have bodyTy {X Y : SExpr} {τ τ' : SExpr.Subst} (Wτ : SubstWF Γ₀ τ τ' Γ ρ)
+        (HX : Γ ⊢ A ≡ X : .sort u) (HY : X::Γ ⊢ Y : B) :
+        X.subst τ :: Γ₀ ⊢ Y.subst τ.lift : B.subst τ.lift :=
+      have hX : Γ₀ ⊢ X.subst τ : .sort u := (HX.subst Wτ.wf₀ Wτ.left.toSubstEq).hasType.2
+      HY.subst (Ctx.WF.cons Wτ.wf₀ hX) (Wτ.left.toSubstEq.lift HX.hasType.2)
+    have tbeta {X Y x T : SExpr} {τ : SExpr.Subst}
+        (hY : X.subst τ :: Γ₀ ⊢ Y.subst τ.lift : B.subst τ.lift) (hx : Γ₀ ⊢ x : X.subst τ)
+        (hT : Γ₀ ⊢ B.subst (τ.cons x) ≡ T : .sort v) :
+        TWHRedS Γ₀ (.app (.lam (X.subst τ) (Y.subst τ.lift)) x) (Y.subst (τ.cons x)) T := by
+      have h := IsDefEq.beta hY hx; rw [inst_lift_cons, inst_lift_cons] at h
+      exact ⟨hT.defeqDF h, beta⟩
+    have hBsub {τ τ'} {ρ'} (W' : SubstWF Γ₀ τ τ' (A :: Γ) ρ') :
+        Γ₀ ⊢ B.subst τ ≡ B.subst τ' : .sort v := HB.defeq.subst W.wf₀ W'.toSubstEq
+    have HXσ : Γ₀ ⊢ A.subst σ ≡ X.subst σ : .sort u := HX.subst W.wf₀ W.left.toSubstEq
+    have HX'σ : Γ₀ ⊢ A.subst σ ≡ X'.subst σ' : .sort u := HX'.subst W.wf₀ W.toSubstEq
     refine ⟨fun x x' p hp ha hv => ?_, fun x p hp ha hv => ?_⟩
     all_goals
       rw [inst_lift_cons]
@@ -343,17 +366,25 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
       replace IH W := IH W (hTerm.lam_inv' p) hBb_sd ((WShape.HasTypeLam.iff.1 htm).2.2 p hp)
     · have W' := cons hp hA1 ha hv W.left
       constructor
-      · exact ((LR Γ₀).whr beta beta).2 <| ((IH W'.fits).1 W').1
+      · have hB' := hBsub W'
+        exact ((LR Γ₀).whr (tbeta (bodyTy W HX HY) (HXσ.defeqDF ha.hasType.1) hB'.hasType.1)
+          (tbeta (bodyTy W HX HY) (HXσ.defeqDF ha.hasType.2) hB'.symm)).2 <| ((IH W'.fits).1 W').1
       · have vtAA' := toValTy le_n le_a aty.1.isType hSort hmem' ((ihA hA' hSort hmem').1 W).1
         have ha' : Γ₀ ⊢ x ≡ x' : A.subst σ' := (HA.defeq.hasType.1.subst W.wf₀ W.toSubstEq).defeqDF ha
         have hv' := (LR Γ₀).conv vtAA' hv
         have ⟨n', _, _, le, le', iB, iv, hmb⟩ := (LE_Interp.soundS HB W'.fits).2 hBb_sd |>.out
         have W2 := cons hp hA1 ha.hasType.1 ((LR Γ₀).left hv) W
         have vtBB := toValTy le le' (aty.2 _ hp).toType iv hmb ((ihB iB iv hmb).1 W2).1
-        refine ((LR Γ₀).whr beta beta).2 <| (LR Γ₀).conv ((LR Γ₀).symm_ty vtBB) ?_
+        have W3 := cons hp hA1 ha hv W
+        refine ((LR Γ₀).whr
+          (tbeta (bodyTy W.symm HX' HY') (HX'σ.defeqDF ha.hasType.1) (hBsub W2).symm)
+          (tbeta (bodyTy W.symm HX' HY') (HX'σ.defeqDF ha.hasType.2) (hBsub W3).symm)).2 <|
+          (LR Γ₀).conv ((LR Γ₀).symm_ty vtBB) ?_
         exact ((IH W'.fits).1 (cons hp hA1 ha' hv' W.symm.left)).2
     · have W' := cons hp hA1 ha hv W
-      exact ((LR Γ₀).whr beta beta).2 <|
+      have hB' := hBsub W'
+      exact ((LR Γ₀).whr (tbeta (bodyTy W HX HY) (HXσ.defeqDF ha) hB'.hasType.1)
+          (tbeta (bodyTy W.symm HX' HY') (HX'σ.defeqDF ha) hB'.symm)).2 <|
         (LR _).trans ((IH W'.fits).2 W'.left) ((IH W'.fits).1 W').2
   | @forallEDF Γ A A' u body body' v HA HBody _ ihA ihBody =>
     cases hmem.unfold with
@@ -375,12 +406,16 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
       have ⟨_, a', _, le_n, le_a, hA', hSort, hmem'⟩ :=
         (LE_Interp.soundS HA W.left.fits).2 hA1 |>.out
       have HAAσ := HA.defeq.subst W.wf₀ W.left.toSubstEq
-      have S' := W.toSubstEq.lift HA.defeq.hasType.1)
+      have S' := W.toSubstEq.lift HA.defeq.hasType.1
+      -- D6: the typed ambient and the typed (reflexive) Π reductions, from the rule itself
+      have Hf := IsDefEq.forallEDF HA.defeq HBody.defeq
+      have HFl := Hf.subst W.wf₀ W.left.toSubstEq)
     · have HAσ := HA.defeq.hasType.1.subst W.wf₀ W.toSubstEq
       have HA'σ := HA.defeq.hasType.2.subst W.wf₀ W.toSubstEq
       constructor
-      · refine ⟨A.subst σ, body.subst σ.lift, A.subst σ', body.subst σ'.lift, u, v,
-          .rfl, .rfl, HAσ, HBody.defeq.hasType.1.subst (Ctx.WF.cons W.wf₀ HAAσ.hasType.1) S', ?_, ?_⟩
+      · refine ⟨⟨_, _, .sort⟩, A.subst σ, body.subst σ.lift, A.subst σ', body.subst σ'.lift, u, v,
+          ⟨⟨_, HFl.hasType.1⟩, .rfl⟩, ⟨⟨_, (Hf.hasType.1.subst W.wf₀ W.toSubstEq).hasType.2⟩, .rfl⟩,
+          HAσ, HBody.defeq.hasType.1.subst (Ctx.WF.cons W.wf₀ HAAσ.hasType.1) S', ?_, ?_⟩
         · exact toValTy le_n le_a aty.1.isType hSort hmem' ((ihA hA' hSort hmem').1 W).1
         simp [LRS.PiDefEq, inst_lift_cons]
         refine ⟨fun _ _ p hp ha hv => ?_, fun _ p hp ha hv => ?_⟩ <;>
@@ -392,8 +427,9 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
         · have ⟨_, _, _, le, le', iB, iv, hmb⟩ :=
             (LE_Interp.soundS HBody W'.fits).2 hB |>.out
           exact toValTy le le' (aty.2 _ hp).toType iv hmb ((ihBody iB iv hmb).1 W').1
-      · refine ⟨A'.subst σ, body'.subst σ.lift, A'.subst σ', body'.subst σ'.lift, u, v,
-          .rfl, .rfl, HA'σ, HAAσ.defeqDF_l (HBody.defeq.hasType.2.subst (Ctx.WF.cons W.wf₀ HAAσ.hasType.1) S'), ?_, ?_⟩
+      · refine ⟨⟨_, _, .sort⟩, A'.subst σ, body'.subst σ.lift, A'.subst σ', body'.subst σ'.lift, u, v,
+          ⟨⟨_, HFl.hasType.2⟩, .rfl⟩, ⟨⟨_, (Hf.hasType.2.subst W.wf₀ W.toSubstEq).hasType.2⟩, .rfl⟩,
+          HA'σ, HAAσ.defeqDF_l (HBody.defeq.hasType.2.subst (Ctx.WF.cons W.wf₀ HAAσ.hasType.1) S'), ?_, ?_⟩
         · exact toValTy le_n le_a aty.1.isType hSort hmem' ((ihA hA' hSort hmem').1 W).2
         simp [LRS.PiDefEq, inst_lift_cons]
         have := toValTy le_n le_a aty.1.isType hSort hmem' ((ihA hA' hSort hmem').2 W.left)
@@ -407,8 +443,9 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
             have W' := cons hp hA1 ha ((LR Γ₀).left hv) W] <;>
         · have ⟨_, _, _, le, le', iB, iv, hmb⟩ := (LE_Interp.soundS HBody W'.fits).2 hB |>.out
           exact toValTy le le' (aty.2 _ hp).toType iv hmb ((ihBody iB iv hmb).1 W').2
-    · refine ⟨A.subst σ, body.subst σ.lift, A'.subst σ, body'.subst σ.lift, u, v,
-        .rfl, .rfl, HAAσ, HBody.defeq.subst (Ctx.WF.cons W.wf₀ HAAσ.hasType.1) S', ?_, ?_⟩
+    · refine ⟨⟨_, _, .sort⟩, A.subst σ, body.subst σ.lift, A'.subst σ, body'.subst σ.lift, u, v,
+        ⟨⟨_, HFl.hasType.1⟩, .rfl⟩, ⟨⟨_, HFl.hasType.2⟩, .rfl⟩,
+        HAAσ, HBody.defeq.subst (Ctx.WF.cons W.wf₀ HAAσ.hasType.1) S', ?_, ?_⟩
       · exact toValTy le_n le_a aty.1.isType hSort hmem' ((ihA hA' hSort hmem').2 W)
       simp [LRS.PiDefEq, inst_lift_cons]
       refine ⟨fun _ _ p hp ha hv => ?_, fun _ p hp ha hv => ?_⟩ <;> (
@@ -433,7 +470,10 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
     refine ⟨fun _ _ W => ⟨?_, ?_⟩, fun σ W => ?_⟩
     · exact ((ihapp hM hA hmem).1 W).1
     · exact ((ihinst ((LE_Interp.soundS (.beta He Ha Happ Hinst) W.fits).1.1 hM) hA hmem).1 W).2
-    · exact ((LR _).whr .rfl (subst_inst ▸ .tail .rfl .beta)).1 ((ihapp hM hA hmem).2 W)
+    · -- D6: both reductions typed at the ambient, from `Happ` and the `beta` rule, substituted
+      have tM := Happ.defeq.subst W.wf₀ W.toSubstEq
+      have tN := (IsDefEq.beta He.defeq Ha.defeq).subst W.wf₀ W.toSubstEq
+      exact ((LR _).whr ⟨tM, .rfl⟩ ⟨tN, subst_inst ▸ .tail .rfl .beta⟩).1 ((ihapp hM hA hmem).2 W)
   | @eta _ e0 A0 B0 He Hlam ihe ihlam =>
     refine ⟨fun σ σ' W => ⟨?_, ?_⟩, fun σ W => ?_⟩
     · exact ((ihlam hM hA hmem).1 W).1
@@ -450,10 +490,14 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
     split <;> intro hM hM' hmem <;> [skip; exact (LR _).bot hmem.isType]
     have ⟨A₁, A₂, u, v, whr_t, htA₁, vtyA₁, htA₂, edge, vpi_M⟩ := (ihlam hM hA hmem).2 W
     have ⟨_, _, _, _, whr_N, _, _, _, _, vpi_N⟩ := (ihe hM' hA hmem).2 W
-    cases whr_t.determ .forallE whr_N .forallE
+    cases whr_t.2.determ .forallE whr_N.2 .forallE
     refine ⟨A₁, A₂, u, v, whr_t, htA₁, vtyA₁, htA₂, edge, ?_, fun a p hp ha hv => ?_⟩
     · exact fun a b p hp ha hv => ⟨(vpi_M.1 hp ha hv).1, (vpi_N.1 hp ha hv).2⟩
-    refine ((LR _).whr ?_ .rfl).2 (vpi_N.2 hp ha hv)
+    -- D6: the eta step typed at `A₂.inst a`, from the substituted `eta` rule and `whr_t`
+    obtain ⟨_, tA⟩ := whr_t.1
+    have tE : Γ₀ ⊢ (SExpr.lam A0 (.app e0.lift (.bvar 0))).subst σ ≡ e0.subst σ : .forallE A₁ A₂ :=
+      tA.defeqDF ((IsDefEq.eta He.defeq).subst W.wf₀ W.toSubstEq)
+    refine ((LR _).whr ⟨.appDF tE ha, ?_⟩ ⟨.appDF tE.hasType.2 ha, .rfl⟩).2 (vpi_N.2 hp ha hv)
     rw [(?_ : (e0.subst σ).app a = _)]; · exact .tail .rfl .beta
     rw [inst_lift_cons, subst, lift_subst_cons]; rfl
   | proofIrrel Hp =>
@@ -471,7 +515,9 @@ theorem LR.adequacy (hΓ : ⊢ Γ) (H : Γ ⊢ M ≡ N : A)
       have := (ihl hM hA hmem).2 W; revert this
       rw [hA1.mkInstS.subst_eq .zero, hA2.mkInstS.subst_eq .zero, hA3.mkInstS.subst_eq .zero]
       let ⟨_, _, _, _, _, a1, a2, a3, a4, a5⟩ := Params.extra_pat Γ₀ h1 h2
-      exact ((LR _).whr .rfl (.tail .rfl (a5 ▸ .extra a1 a2 a3 a4))).1
+      -- D6: `Δ = []` (today's `extra_patV`): the step is typed by the `extra` rule itself
+      have tE : Γ₀ ⊢ _ ≡ _ : _ := IsDefEq.extra h1 h2
+      exact ((LR _).whr ⟨tE.hasType.1, .rfl⟩ ⟨tE, .tail .rfl (a5 ▸ .extra a1 a2 a3 a4)⟩).1
 
 theorem forallE_whRed_l (hΓ : ⊢ Γ) (d : Γ ⊢ A₀ ≡ SExpr.forallE B₁ F₁ : .sort s) :
     ∃ B₀ F₀, Γ ⊢ A₀ ⤳* .forallE B₀ F₀ ∧ ∃ u v,
@@ -484,8 +530,9 @@ theorem forallE_whRed_l (hΓ : ⊢ Γ) (d : Γ ⊢ A₀ ≡ SExpr.forallE B₁ F
     refine WShape.HasTypePi.iff.2 ⟨.bot (.bot' .sort), fun x hx => ?_⟩
     cases WShape.HasType.bot_r hx; exact WShapeFun.bot_app.symm ▸ .bot .sort
   have := (LR.adequacy hΓ d ((LE_Interp.sound hΓ d .nil).1.2 hPi) (.sort TShape.sort_eqv.1) hmem).2 (.id hΓ)
-  have ⟨_, _, _, _, _, _, redA₀, redPi, convB, convF, _⟩ := subst_id ▸ subst_id ▸ subst_id ▸ this
-  cases WHNF.forallE.whRedS redPi; exact ⟨_, _, redA₀, _, _, convB, convF⟩
+  have ⟨_, _, _, _, _, _, _, redA₀, redPi, convB, convF, _⟩ :=
+    subst_id ▸ subst_id ▸ subst_id ▸ this
+  cases WHNF.forallE.whRedS redPi.2; exact ⟨_, _, redA₀.2, _, _, convB, convF⟩
 
 /-- Pi–Pi injectivity: if two Pi types are definitionally equal,
 their domains and codomains are each definitionally equal. -/
@@ -511,5 +558,5 @@ theorem sort_inv (hΓ : ⊢ Γ) (d : Γ ⊢ SExpr.sort u ≡ SExpr.sort v : V) :
     let .sort := Shape.HasType.unfold_iff.1 h5; rfl
   have h1' : (1 : Nat) ≤ n := h1
   have := (LR.adequacy hΓ d hM (hA.unlift h1') .sort).2 (.id hΓ)
-  have ⟨w, h1, h2⟩ := (LR _).sort_iff.1 (subst_id ▸ subst_id ▸ subst_id ▸ this)
-  cases WHNF.sort.whRedS h1; cases WHNF.sort.whRedS h2; rfl
+  have ⟨_, w, h1, h2⟩ := (LR _).sort_iff.1 (subst_id ▸ subst_id ▸ subst_id ▸ this)
+  cases WHNF.sort.whRedS h1.2; cases WHNF.sort.whRedS h2.2; rfl
