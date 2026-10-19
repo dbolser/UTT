@@ -272,8 +272,17 @@ scratch namespace, make `sort_iff`, `whr` and `whr_ty` typed, and re-prove
 `LR0`, the 19 fields of the `LRS` instance and the lift lemmas. Pass: no
 `sorry`. If it fails, the fallback is the artifact's full typed design (`bot`
 takes `TyDefEq A A a`; an `isType` field), which costs an obligation at each
-of the 15 `bot` call sites in `ShapeLogRelAdequacy.lean`. Scratch only, one
-to two days, nothing else depends on it. `PLAN.md` §2–3.
+of the 15 `bot` call sites in `ShapeLogRelAdequacy.lean`. `PLAN.md` §2–3.
+
+**E1 passed (2026-10-19).** Two independent attempts, each checked by an
+independent verifier: the typed relation closes all 19 fields, both lift
+directions and `Subst1`/`SubstWF` with no sorry, and all 13 proven cases of
+`LR.adequacy` go through over it with the `const` case as the only sorry. No
+fallback was needed; subject reduction was not used. Forced side changes:
+`LR0.DefEq` takes the ambient type, the simp lemma `LRS.DefEq.sort_a` splits
+in two, `LRS.LamDefEq.whr` becomes typed. Report and files:
+`docs/const-case/plan/E1/`. The transcription into `ShapeLogRel.lean` and
+`ShapeLogRelAdequacy.lean` (plan items R1+R2) is next.
 
 **Known risks** (`PLAN.md` §4 and its audit log). The shape-level iota match
 binds a field variable to the raw field shape, and a constructor shape counts
@@ -316,8 +325,9 @@ Good first tasks:
 - Turn `scripts/TraceSorry.lean` into a pass/fail check (expected sorry set
   for `IsDefEq'.uniq` is exactly `{LR.adequacy}`, no axioms beyond the three
   standard ones) and add it to CI on this fork.
-- Experiment E1 of `docs/const-case/PLAN.md`, the typed-LR spike: scratch
-  only, self-contained, and it decides the plan's main bet.
+- Experiments E3 (the rank measure and `Pattern.gen`, `docs/const-case/PLAN.md`
+  §2) and E6a (field-entry lowering): scratch only, on the plan's critical path
+  now that E1 has passed.
 - Restate `extra_patV` on λ-telescopes with the rule's open typed equation
   (`PLAN.md` D5) and re-derive `Params.extra_pat` (`SExpr.lean` ~1006) and its
   model-side uses; then move the ℕ instance to `envA` (`docs/params/`).

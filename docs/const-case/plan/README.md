@@ -70,3 +70,11 @@ Audit round 3:
 | `ForallInvE.lean` | `IsDefEqStrong.forallE_inv'` over an arbitrary environment, and the telescope lemma that gives the spine lemma's `lam` case a rank-bounded derivation of each domain type. |
 | `ExtraLamStmt.lean` | The statement of the `extra` case of `strongSoundS` for λ-wrapped rules, with the λ-form `extra_patV` as an explicit hypothesis (experiment E5); one marked sorry. |
 | `RhsLowerStmt.lean` | `Valuation.lower` and the statement of the lowering lemma `rhs_lower` for the pattern leaf (experiment E6a); three marked sorries, two inherited from `PatLeafStmt2.lean`. |
+
+## E1/ (the typed-LR spike, PASSED 2026-10-19)
+
+`E1/E1-REPORT.md` is the report. `E1/TypedLR.lean` is `ShapeLogRel.lean:5272-6117` with
+D6 applied (sorry-free, standard axioms); `E1/TypedAdequacy.lean` is
+`ShapeLogRelAdequacy.lean:8-515` over it (only the `const`-case sorry). They import each other
+as modules, so `../check.sh` does not cover them; the report's §7 says how to rebuild them,
+and `E1/CheckLR.lean`, `E1/CheckAdequacy.lean` are the axiom and tracer checks.

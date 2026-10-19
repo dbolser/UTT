@@ -10,6 +10,10 @@
 > here: the `Probe*.lean` and `Exp2_recheck.lean` probes and `Retype.lean` (no longer typechecks
 > at HEAD). The experiments in this directory are pinned to today's definitions and will stop
 > compiling as the plan's changes land (see R1's docs-pinning step).
+>
+> **E1 passed (2026-10-19).** Two independent attempts, each independently verified: D6 holds
+> for the whole `LogRel` block and for all 13 proven cases of `LR.adequacy`, with no fallback
+> needed. Report and files: `plan/E1/`. R1+R2 (the transcription into the real files) follow.
 
 
 Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.
