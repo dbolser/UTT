@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before IsDefEqStrong was indexed by an environment (docs/const-case/PLAN.md D4, landed by R4); no longer compiles.
 /-! Completeness audit 2. `LR.pat_leaf_1a` (PLAN D4, amend-1/PatLeafStmt.lean) takes
 `(g : PatGen)` with NO hypothesis tying `g` to `p`, `r`, `c`, `Ts`. Its `hty`/`hdef`
 hypotheses are then satisfiable by a junk `g` for EVERY `p r c ci rank`, so the statement

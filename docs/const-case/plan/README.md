@@ -5,11 +5,14 @@ of the plan, copied verbatim (their docstrings cite `/tmp/utt-snap6`, a build
 of commit `3c35f59`, and `/tmp/utt-exp/plan/...` scratch paths). Each imports
 `Lean4Lean.Experimental.ShapeLogRelAdequacy` (`AxDepsV.lean` only
 `Theory.Typing.Strong`); none is part of the build. The files in `historical/`
-were typechecked at `3c35f59` and stopped compiling when the typed relation
-landed (R1+R2); `../check.sh` skips that directory. In particular
-`TypedWhr.lean` and `CtorClause1a.lean` now clash with the repo's own
-`TyRedS`/`TWHRedS`/`whr_typed`, which is where they went; `../check.sh` typechecks them all. All are sorry-free except
-the four `*Stmt*.lean` files, whose theorem bodies are deliberate sorries (they
+were typechecked at `3c35f59` and stopped compiling when the plan's changes
+landed; `../check.sh` skips that directory. `TypedWhr.lean` and
+`CtorClause1a.lean` clash with the repo's own `TyRedS`/`TWHRedS`/`whr_typed`
+since R1+R2, which is where they went. `WeakE`, `MkSE`, `ForallInvE`,
+`EmptyBelow`, `JunkGen`, `PatLeafStmt`, `PatLeafStmt2` and `RhsLowerStmt`
+clash with `VEnv.below`, `IsDefEqStrong E`, `mkSE` and `telescope` since R4,
+likewise. `../check.sh` typechecks the rest. All are sorry-free except the
+four `*Stmt*.lean` files, whose theorem bodies are deliberate sorries (they
 pin statements for the experiments). `PLAN.md` cites them by bare name, with the tag [T].
 
 The plan's own constructions (D1, D6):

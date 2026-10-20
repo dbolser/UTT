@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before IsDefEqStrong was indexed by an environment (docs/const-case/PLAN.md D4, landed by R4); no longer compiles.
 /-! Audit circ-3: the spine lemma's lam case (R9) needs, for each domain `T` of the constant's
 own type telescope, an `env.below rank (rank c)` strong derivation of `T` in its telescope
 context, to feed the WF IH (→ `ihA`) and `Adequate.cons` (→ `HA`). The only syntactic source is

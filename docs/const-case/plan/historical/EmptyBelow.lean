@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before IsDefEqStrong was indexed by an environment (docs/const-case/PLAN.md D4, landed by R4); no longer compiles.
 /-! Completeness audit 3: `rank_ordered` for `emptyParams` (env := .empty). `VEnv.below` as in
 Measure6.lean:44 / PatLeafStmt.lean:44 (copied). Sorry-free. -/
 namespace Lean4Lean

@@ -1,5 +1,10 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
-/-! Plan amender, round 1: the E6 interface `LR.pat_leaf_1a` and the amended spine-lemma
+-- historical: typechecked at 3c35f59, before IsDefEqStrong was indexed by an environment (docs/const-case/PLAN.md D4, landed by R4); no longer compiles.
+/-! Plan amender, round 2: copy of amend-1/PatLeafStmt.lean with `pat_leaf_1a` taking
+`hg : gen Params.env rank Params.classify p r.1 = some g` (audit round 2, #1); `gen` is a variable
+standing in for R5's `Pattern.gen`. Typechecked AS STATEMENTS against HEAD 3c35f59 (/tmp/utt-snap6).
+Round-1 header follows.
+Plan amender, round 1: the E6 interface `LR.pat_leaf_1a` and the amended spine-lemma
 statement (`LR.const_spine`), typechecked AS STATEMENTS against HEAD 3c35f59 (/tmp/utt-snap6).
 Stand-ins: the repo's `LR` for E1+E2's `T.LR` (D6 keeps every name and signature used here);
 `rank` a variable for the R5 field `Params.rank`; `IsDefEqStrongE` for R4's `IsDefEqStrong E`;
@@ -160,7 +165,8 @@ theorem LR.pat_leaf_1a {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
     (hP : Params.Pat p r) (hMt : LE_Interp.Matches p c rargs m2)
     (hRHS : LE_Interp.RHS ls m2 R mC r.1) (hchk : r.2 = .true)
     -- `Pattern.gen … p r.1 = some g` and the `pat_typed` / `pat_defeq` conclusions for it
-    (g : PatGen)
+    (gen : VEnv → (Name → Nat) → (Name → Option Classification) → (p : Pattern) → p.RHS → Option PatGen)
+    (g : PatGen) (hg : gen Params.env rank Params.classify p r.1 = some g)
     (hty : OnCtx (g.self ++ g.ctx) (fun Γ A => (Params.env.below rank (rank c)).IsType ci.uvars Γ A) ∧
       (Params.env.below rank (rank c)).HasType ci.uvars (g.self ++ g.ctx) g.rhsAbs
         (g.type.liftN g.self.length))
@@ -178,3 +184,5 @@ theorem LR.pat_leaf_1a {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
 
 end SExpr
 end Lean4Lean
+
+#check @Lean4Lean.SExpr.LR.pat_leaf_1a

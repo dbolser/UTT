@@ -82,8 +82,12 @@ typed logical relation landed (plan items R1+R2): they use the old untyped
 in `ShapeLogRel.lean`. `CtorClause.lean` and `Subst1.lean` followed when the
 stage-1a constructor clause landed (R3): the first defines its own
 `LRS.CtorDefEq`, the second proves that the relation is trivial at `indTy`,
-which is now false by design. Each carries a `-- historical:` line after its
-import. Their claims concern the earlier relation and are kept for the record;
+which is now false by design. `Measure.lean` and eight more files in `plan/`
+(`WeakE`, `MkSE`, `ForallInvE`, `EmptyBelow`, `JunkGen`, `PatLeafStmt`,
+`PatLeafStmt2`, `RhsLowerStmt`, now in `plan/historical/`) followed when
+`IsDefEqStrong` got its environment index (R4): they define their own
+`VEnv.below`, `IsDefEqStrongE`, `mkSE` or `telescope`, which now live in
+`SExpr.lean`. Each carries a `-- historical:` line after its import. Their claims concern the earlier relation and are kept for the record;
 `check.sh` skips them.
 
 References to `/tmp/utt-snap*`, `/tmp/utt-exp/...` and

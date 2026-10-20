@@ -151,6 +151,14 @@ green too. The tracer is not yet a pass/fail CI check (a good first task, §8).
   `const I ls`), with every `LogRel` field and the lift lemmas re-proved at
   the new cases and `ShapeLogRelAdequacy.lean` unchanged (plan D1/D2, item R3,
   after experiment E2; `2c5a205`). The tracer output is identical.
+- The strong judgment indexed by an environment: `IsDefEqStrong (E : VEnv)`
+  with `⊢ₛ` as `IsDefEqStrong Params.env`, `IsDefEqStrong.mono`, the
+  rank-bounded sub-environment `VEnv.below` and its lemmas, `exists_below`,
+  the translation `mkSE` over any `E` (`mkS` is now its `Params.env`
+  instance), `weak_append`, the Π-telescope inversion `telescope`, and `E`
+  forms of `defeq` and `LE_Interp.soundS`. `IsDefEq.strong`, `strongS`,
+  `envStrongS`, `mkS` and every statement in `ShapeLogRelAdequacy.lean` keep
+  their types (plan D4, item R4; `9dcefbc`). The tracer output is identical.
 - Typed reductions in the logical relation (`TyRedS`, `TWHRedS`, `AmbSort`;
   the `sort_iff`, `sort_iff_ty`, `whr`, `whr_ty` fields take typed reductions,
   `(⊥, ·)` stays `True`; the other fifteen fields and every statement in
@@ -250,7 +258,9 @@ the ordered work items are in `PLAN.md`).
    environment-indexed strong judgment `IsDefEqStrong (E : VEnv)`, in
    lexicographic order (rank bound, derivation, `hM`, then the `Const`/`RHS`
    premises). `IsDefEqStrong.const` gets no new premise; `IsDefEq.strongS`
-   and `envStrongS` are unchanged; `mkS` is generalised. New `Params` fields
+   and `envStrongS` are unchanged; `mkS` is generalised. The judgment,
+   `VEnv.below`, `mkSE`, `weak_append` and `telescope` are in (R4,
+   `9dcefbc`); the rank itself is next. New `Params` fields
    give the rank, the rank-bounded typing of constant types and of each rule's
    right-hand side in a computed pattern context (`Pattern.gen`), and the rule
    as a definitional equality (`pat_defeq`). Skeleton: `Measure.lean`.
@@ -297,9 +307,11 @@ in two, `LRS.LamDefEq.whr` becomes typed. Report and files:
 `ShapeLogRelAdequacy.lean` (plan items R1+R2) landed as `c6b258f`; the eleven
 `docs/` experiments that were written against the untyped fields are marked
 historical (`0fadc0c`). The stage-1a constructor clause followed the same
-route (experiment E2, two verified attempts, then R3 as `2c5a205`). Next on the
-plan's critical path: E3 (the rank measure and `Pattern.gen`) and R4 (the
-environment-indexed strong judgment), then E6a/E6 (the pattern leaf).
+route (experiment E2, two verified attempts, then R3 as `2c5a205`), and the
+environment-indexed strong judgment landed as R4 (`9dcefbc`, verified
+independently; nine more `docs/` experiments went historical). Next on the
+plan's critical path: E3 (the rank measure and `Pattern.gen`), then E6a/E6
+(the pattern leaf).
 
 **Known risks** (`PLAN.md` §4 and its audit log). The shape-level iota match
 binds a field variable to the raw field shape, and a constructor shape counts

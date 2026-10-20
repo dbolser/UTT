@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before IsDefEqStrong was indexed by an environment (docs/const-case/PLAN.md D4, landed by R4); no longer compiles.
 /-! Lens 3 experiment: the measure for the `const` case of `LR.adequacy`.
 Part A: rank / env prefix / proposed Params fields.  Part B: env-indexed strong judgment.
 Part C: `EnvStrongR` (rank-bounded typing of constant types and rule leaves).

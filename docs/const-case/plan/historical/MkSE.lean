@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before IsDefEqStrong was indexed by an environment (docs/const-case/PLAN.md D4, landed by R4); no longer compiles.
 /-! Completeness audit 3: `mkSE` (R4) needs env-generic `isType'`/`hasTypeS`, which R4 does
 not list. The repo's versions (SExpr.lean:1338-1365) are stated with `⊢ₛ` (= `Params.env`).
 Here: `IsDefEqStrongE` copied from `audit-complete-1/WeakE.lean`; `hasTypeS`/`isType'`

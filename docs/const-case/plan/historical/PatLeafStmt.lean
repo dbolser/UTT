@@ -1,14 +1,6 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
-/-! Plan amender, round 3: copy of amend-2/PatLeafStmt2.lean (unchanged, lines 1-183 there) plus
-the E6a interface: `Valuation.lowerCtx`/`Valuation.lower` (D4 step 1, ρ_low) and the statement of
-`LR.rhs_lower` (D4 step 2), appended at the end. Typechecked AS STATEMENTS at /tmp/utt-snap6.
-Deliberate sorries: the three theorem bodies (pat_leaf_1a, const_spine, rhs_lower; marked).
-Round-2 header follows.
-Plan amender, round 2: copy of amend-1/PatLeafStmt.lean with `pat_leaf_1a` taking
-`hg : gen Params.env rank Params.classify p r.1 = some g` (audit round 2, #1); `gen` is a variable
-standing in for R5's `Pattern.gen`. Typechecked AS STATEMENTS against HEAD 3c35f59 (/tmp/utt-snap6).
-Round-1 header follows.
-Plan amender, round 1: the E6 interface `LR.pat_leaf_1a` and the amended spine-lemma
+-- historical: typechecked at 3c35f59, before IsDefEqStrong was indexed by an environment (docs/const-case/PLAN.md D4, landed by R4); no longer compiles.
+/-! Plan amender, round 1: the E6 interface `LR.pat_leaf_1a` and the amended spine-lemma
 statement (`LR.const_spine`), typechecked AS STATEMENTS against HEAD 3c35f59 (/tmp/utt-snap6).
 Stand-ins: the repo's `LR` for E1+E2's `T.LR` (D6 keeps every name and signature used here);
 `rank` a variable for the R5 field `Params.rank`; `IsDefEqStrongE` for R4's `IsDefEqStrong E`;
@@ -169,8 +161,7 @@ theorem LR.pat_leaf_1a {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
     (hP : Params.Pat p r) (hMt : LE_Interp.Matches p c rargs m2)
     (hRHS : LE_Interp.RHS ls m2 R mC r.1) (hchk : r.2 = .true)
     -- `Pattern.gen … p r.1 = some g` and the `pat_typed` / `pat_defeq` conclusions for it
-    (gen : VEnv → (Name → Nat) → (Name → Option Classification) → (p : Pattern) → p.RHS → Option PatGen)
-    (g : PatGen) (hg : gen Params.env rank Params.classify p r.1 = some g)
+    (g : PatGen)
     (hty : OnCtx (g.self ++ g.ctx) (fun Γ A => (Params.env.below rank (rank c)).IsType ci.uvars Γ A) ∧
       (Params.env.below rank (rank c)).HasType ci.uvars (g.self ++ g.ctx) g.rhsAbs
         (g.type.liftN g.self.length))
@@ -186,54 +177,5 @@ theorem LR.pat_leaf_1a {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
       (B.subst σ) m a := by
   sorry -- SORRY(statement only)
 
-
-/-- ρ_low's pattern-context part (PLAN D4 step 1), over `.nil` (the valuation of `SubstWF.id`,
-base context `Γ₀`), innermost first: the lowered field entries `fields`, then the recursor
-arguments `ρ 1 … ρ m` (`ρ 0` is the major). `fields[i]` is `l_i.T` when the ctor shape's field
-`l_i` is `⊥` or a ctor shape, else `⊥`; `⊥` when the field type is Prop-valued. -/
-def Valuation.lowerCtx (fields : List TShape) (ρ : Valuation) (m : Nat) : Valuation :=
-  fields.foldr (fun x ρ' => ρ'.push x) <|
-    (List.range m).foldr (fun i ρ' => ρ'.push (ρ (i + 1))) .nil
-
-/-- ρ_low (PLAN D4 step 1): the self entries (index `j` = `j`-th self) on top of `lowerCtx`. -/
-def Valuation.lower (selfs fields : List TShape) (ρ : Valuation) (m : Nat) : Valuation :=
-  selfs.foldr (fun x ρ' => ρ'.push x) (Valuation.lowerCtx fields ρ m)
-
-/-- E6a interface (PLAN D4 step 2). Produces the self entries for `W_p` (step 1) from `LIH`, and
-`LE_Interp ρ_low y' rhsAbs` at every typed `y'` below the RHS shape `mC`. `idx` stands in for
-`Pattern.gen`'s path ↦ `g.ctx` index (`σ_p (idx path) = m2 path`). Typed-entry facts: `hfit`
-(every `lowerCtx` entry typed, as `SubstWF.cons` needs) and `hvar` (a typed shape below a
-matched path shape is below its lowered entry). -/
-theorem LR.rhs_lower {Γ₀ : List SExpr} {ρ₀ : Valuation} {c : Name} {ls : List SLevel}
-    {R : TShape → SExpr → Prop} (LIH : LR.LocalIH rank Γ₀ ρ₀ c R)
-    {p : Pattern} {r : p.RHS × p.Check} {n : Nat} {rargs : List (WShape n)}
-    {m2 : p.Path → TShape} {mC : TShape}
-    (hP : Params.Pat p r) (hMt : LE_Interp.Matches p c rargs m2)
-    (hRHS : LE_Interp.RHS ls m2 R mC r.1)
-    (gen : VEnv → (Name → Nat) → (Name → Option Classification) → (p : Pattern) → p.RHS → Option PatGen)
-    (g : PatGen) (hg : gen Params.env rank Params.classify p r.1 = some g)
-    (idx : p.Path → Nat)
-    {fields : List TShape} {ρ : Valuation} {m : Nat} (hm : g.ctx.length = fields.length + m)
-    (hfit : (Valuation.lowerCtx fields ρ m).Fits Γ₀ (g.ctx.map (SExpr.mkInst ls) ++ Γ₀))
-    (hvar : ∀ path {n} {y b : WShape n}, y.T ≤ m2 path → y.HasType b →
-      LE_Interp (Valuation.lowerCtx fields ρ m) b.T
-        (SExpr.mkInst ls ((g.ctx.getD (idx path) (.sort .zero)).liftN (idx path + 1))) →
-      y.T ≤ Valuation.lowerCtx fields ρ m (idx path)) :
-    ∃ selfs : List TShape, selfs.length = g.self.length ∧
-      (∀ j s, selfs[j]? = some s → ∃ (me : TShape) (c' : Name) (ls' : List SLevel) (ci' : VConstant),
-        R me (.const c' ls') ∧ rank c' = rank c ∧ Params.env.constants c' = some ci' ∧
-        ls'.length = ci'.uvars ∧ me ≤ s ∧
-        SExpr.mkInst ls (g.self.getD j (.sort .zero)) = SExpr.mkInst ls' ci'.type ∧
-        (∃ (k : Nat) (x b : WShape k), s = x.T ∧ x.HasType b ∧
-          LE_Interp ρ₀ b.T (SExpr.mkInst ls' ci'.type)) ∧
-        LR.ConstGoal Γ₀ ρ₀ s c' ls' ci') ∧
-      ∀ {n'} {y' a' : WShape n'}, y'.T ≤ mC → y'.HasType a' →
-        LE_Interp (Valuation.lower selfs fields ρ m) a'.T
-          (SExpr.mkInst ls (g.type.liftN g.self.length)) →
-        LE_Interp (Valuation.lower selfs fields ρ m) y'.T (SExpr.mkInst ls g.rhsAbs) := by
-  sorry -- SORRY(statement only)
-
 end SExpr
 end Lean4Lean
-
-#check @Lean4Lean.SExpr.LR.rhs_lower
