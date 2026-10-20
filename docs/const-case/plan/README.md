@@ -79,6 +79,19 @@ Audit round 3:
 | `ExtraLamStmt.lean` | The statement of the `extra` case of `strongSoundS` for λ-wrapped rules, with the λ-form `extra_patV` as an explicit hypothesis (experiment E5); one marked sorry. |
 | `RhsLowerStmt.lean` | `Valuation.lower` and the statement of the lowering lemma `rhs_lower` for the pattern leaf (experiment E6a); three marked sorries, two inherited from `PatLeafStmt2.lean`. |
 
+## E6a/ (the pattern-leaf field lowering, PASSED with a corrected statement, 2026-10-20)
+
+`E6a/E6a-REPORT.md` is the report. The plan's pinned lowering statement
+(`historical/RhsLowerStmt.lean:208`) is false, by two sorry-free refutations; the corrected
+`LR.rhs_lower` (new `hR` and `hhead` hypotheses, self clause witnessed only off ⊥) is proved
+sorry-free in `E6a/FieldLower.lean` (attempt a, over E3 attempt a's module) and
+`E6a/FieldLower-b.lean` (attempt b, `hhead` split into `hrec`/`hfield`, with
+`rhs_lower_iota` discharging them). `E6a/Check.lean` is the axiom, tracer and fidelity check;
+`HheadSupply.lean`, `ConstLocalHR.lean` (a's verifier), `P2.lean`, `SelfLen.lean` (b's verifier)
+are the supply and refutation checks. The one upstream change, `hR` on `const_spine` and
+`pat_leaf_1a`, is in the repo (R7+R8). Module files, excluded from `../check.sh`; the report's §5
+says how to rebuild.
+
 ## E4/ (the ℕ instance of the new fields, PASSED 2026-10-20)
 
 `E4/E4-REPORT.md` is the report. `E4/NatParamsA.lean` (attempt a, over E3 attempt a's module)

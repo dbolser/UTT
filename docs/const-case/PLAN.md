@@ -91,6 +91,18 @@
 > last premise. Without it the pattern leaf (and the two stubs as E3 stated them) is false: a fixed
 > leaf that is not a self occurrence is otherwise unconstrained. R9's and R10's statements are the
 > landed ones.
+>
+> **E6a passed with a corrected statement (2026-10-20).** Report and modules in `plan/E6a/`. Two
+> attempts independently refuted the pinned `rhs_lower` (`historical/RhsLowerStmt.lean:208`): with
+> `R := ∅` and `hRHS := RHS.bot` the self clause demands witnesses that do not exist (so the pinned
+> statement forces `g.self = []`), and `R` was not tied to `LE_Interp` at all. The corrected lemma
+> (report §1) is proved sorry-free: new `hR : ∀ m e, R m e → LE_Interp ρ₀ m e` (D4 amendment above),
+> new `hhead` (each path is a recursor argument with `m2 path ≤` its lowered entry, from `hρ`, or a
+> field whose context type is an inductive constant, from `gen_head_ctor` + `ctor_fields_closed`;
+> supply lemma proved by a's verifier), and the self clause's `R`-witness only for `s ≠ ⊥`, with the
+> occurrence pinned and `us.length = ci'.uvars` unconditional. D4's [A] holds (`app_collapse`); option
+> (b) is not needed. D4 steps 1-2 and §4 Q6 read with these changes; E6/R10 build on the corrected
+> lemma.
 
 
 Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.

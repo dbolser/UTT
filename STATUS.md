@@ -375,11 +375,15 @@ the off-path R6 and R12.
 **Known risks** (`PLAN.md` §4 and its audit log). The shape-level iota match
 binds a field variable to the raw field shape, and a constructor shape counts
 as typed at `indTy` whatever its fields are (`ctor succ [sort]`), while
-`SubstWF.cons` needs typed entries: either lower fields to their typed part at
-the leaf or type constructor fields in `Shape.hasType`, to be decided before
-the pattern-leaf dry run. The spine lemma must be stated for every valuation
-above `Valuation.ofRargs`, because `Const.lam` ranges over graph pairs rather
-than typed inputs. Parametric fields are stage 2.
+`SubstWF.cons` needs typed entries. Experiment E6a (2026-10-20,
+`docs/const-case/plan/E6a/`) settled this: lowering fields to their typed part
+at the leaf works, with the lowering lemma proved sorry-free, but the plan's
+pinned statement of it was false (two formal refutations) and the corrected
+one needs the pattern leaf to pass the interpretation of the rule's fixed
+leaves (`hR`, now a hypothesis of the spine lemma and the pattern leaf) and a
+small fact about recursor-argument and field positions. The spine lemma must
+be stated for every valuation above `Valuation.ofRargs`, because `Const.lam`
+ranges over graph pairs rather than typed inputs. Parametric fields are stage 2.
 
 ## 7. After the `SExpr` theorem
 
