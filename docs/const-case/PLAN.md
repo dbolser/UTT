@@ -113,6 +113,22 @@
 > (one sorry, `ctor_sort_nat`); `docs/params/check.sh` asserts the counts and the tracer at `natParams`;
 > `Schema.lean`, `plan/ExtraLamStmt.lean`, `plan/LamRuleTyped.lean` went historical. Tracer unchanged
 > (`const_spine`). Open Lean items: R10 (from E6), R9, R11.
+>
+> **R9 landed (2026-10-20, verified independently; two experiment attempts proved the pinned statement
+> first).** `LR.const_spine` is proved by induction on `Const`; `LR.pat_leaf_1a` (stub) now precedes it;
+> 27 helpers sit between them (`Const.beyond` from `Beyond.lean`, now historical). **Tracer first block:
+> `constants directly containing sorry (1): Lean4Lean.SExpr.LR.pat_leaf_1a`**, axioms unchanged.
+> Corrections to the R9 row and D4's spine-lemma bullets, found by both attempts: `IsDefEq.const` cannot
+> type the inductive `I` (nothing in `Params` gives `env.constants I`; `indTy_closed` takes it as a
+> hypothesis), so the `TyRedS` of the ctor case comes from `tyV`'s `TyDefEq` at `indTy`; `classify I =
+> .indTy 0` comes from `ctor_syn` + `ctor_fields_closed` by telescope maximality, not from `indTy_closed`;
+> `LE_Interp.mono_l`, `LR.DefEq.lift`, `LR.TyDefEq.lift` are not needed (`Const` is valuation-free, `R` is
+> read at `ρ₀` through `hR`; the level gap is TShape comparisons, §4 Q7's "fallback: none needed"
+> confirmed); the `N`-side of `LamDefEq`'s first conjunct needs `W.symm.left` plus two conversions; the
+> next `tyV` combines `PiDefEq.2` and `PiDefEq.1` by `trans_ty`; `FieldRel` comes from the `Subst1`
+> entry's own type shape plus "a constructor shape below `x` forces `a ≥ indTy`", not from `mono_l`;
+> `Const.beyond`'s bounds use telescope maximality (a telescope over a non-Π tail is maximal), not
+> `foldr` injectivity. Open Lean items: R10 (from E6), R11.
 
 
 Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.
