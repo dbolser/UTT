@@ -129,6 +129,26 @@
 > entry's own type shape plus "a constructor shape below `x` forces `a ≥ indTy`", not from `mono_l`;
 > `Const.beyond`'s bounds use telescope maximality (a telescope over a non-Π tail is maximal), not
 > `foldr` injectivity. Open Lean items: R10 (from E6), R11.
+>
+> **E6 passed with two new fields, and R10 landed (2026-10-20, verified independently).** Both E6
+> attempts proved the pinned `pat_leaf_1a` up to the same two facts, which the landed `Params` did
+> not state and which `LR.const_spine` cannot supply: (A) the head of the recursor's major domain is
+> an inductive type (so `const I us` is a whnf and the constructor clause's levels are the pattern's
+> `us.map (instV ls)`; otherwise this needs level injectivity under defeq, i.e. unique typing); (B) a
+> rule's right-hand side is never a bare constructor-field variable (otherwise a Prop-sorted field
+> lowered to `⊥` needs sort uniqueness). Both are invariants of Lean's recursor rules; they are now
+> the fields `rec_major_indTy` and `rhs_not_field` (SExpr.lean, after `ctor_fields_closed`), proved for
+> `natParams`, vacuous for `emptyParams`. R10 landed E6a's lowering and E6 attempt a's proof (the six
+> steps; `LR.rhs_lower2` carries the lowering, `LR.pat_leaf_iota`/`pat_leaf_delta` the two rule
+> shapes) before `pat_leaf_1a` in `ShapeLogRelAdequacy.lean` (now ~3670 lines). **Tracer first
+> block: `axioms reached (3): Classical.choice, Quot.sound, propext; constants directly containing
+> sorry (0)`.** Plan corrections from E6: D4 step 2's `a'` premise is not obtainable from the goal's
+> `a` (its major entry may have untyped fields): the leaf gets the RHS shape's interpretation from
+> `rhs_lower_core`'s root conjunct, a typed pair above it by soundness at `ρ_low`, and transfers the
+> type back to `B` at `ρ` (interpretations of a constructor spine lie below `ctor'` of the argument
+> shapes); the frozen `hty`/`hdef` binders of `pat_leaf_1a` are unused (`pat_typed`/`pat_defeq`
+> supply them). Every Lean item of §2 has landed (R11's wiring was absorbed into R8); R13 is the
+> STATUS/PLAN write-up, done in these header paragraphs and STATUS §3-§8.
 
 
 Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.

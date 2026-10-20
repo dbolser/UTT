@@ -1,6 +1,7 @@
 # The `const` case of `LR.adequacy`: design notes
 
-The last research gap on the route to unique typing (see `STATUS.md` §6):
+The last research gap on the route to unique typing, closed on 2026-10-20 (see
+`STATUS.md` §6):
 three independent design analyses, a five-lens adversarial review of them,
 and the merged plan, each backed by Lean experiments against the current tree.
 
