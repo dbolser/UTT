@@ -84,6 +84,16 @@ Audit round 3:
 | `ExtraLamStmt.lean` | The statement of the `extra` case of `strongSoundS` for λ-wrapped rules, with the λ-form `extra_patV` as an explicit hypothesis (experiment E5); one marked sorry. |
 | `RhsLowerStmt.lean` | `Valuation.lower` and the statement of the lowering lemma `rhs_lower` for the pattern leaf (experiment E6a); three marked sorries, two inherited from `PatLeafStmt2.lean`. |
 
+## E6/ (the pattern leaf, PASSED with two new `Params` fields, 2026-10-20)
+
+`E6/E6-REPORT.md` is the report. Both attempts proved the pinned `LR.pat_leaf_1a` up to the same
+two facts, invariants of Lean's recursor rules missing from `Params` (the recursor's major-domain
+head is an inductive type; a rule's right-hand side is never a bare constructor-field variable);
+they became the fields `rec_major_indTy` and `rhs_not_field`, and R10 landed attempt a's proof
+(`E6/a/`, modules and `LOG.md`; `E6/b/` is attempt b, with `T.pat_leaf_1a_restricted` proving the
+pinned statement under the two candidate fields). The tracer for the final theorem reaches no sorry
+since R10. Module files, excluded from `../check.sh`; the report's §4 says how to rebuild.
+
 ## E6a/ (the pattern-leaf field lowering, PASSED with a corrected statement, 2026-10-20)
 
 `E6a/E6a-REPORT.md` is the report. The plan's pinned lowering statement
