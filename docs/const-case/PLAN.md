@@ -51,6 +51,15 @@
 > the report §2: `RP : RankParams` explicit; (c) with pointwise `σ` hypotheses; `rhs` the primary
 > option; `gen` checks `classify c' = .ctor n` and needs a syntactic `.const I us` major domain
 > (stage 1a); self abstraction is bare leaves only. R8's `const_case` wiring came for free.
+>
+> **E4 passed (2026-10-20).** Two verified attempts (one over each E3 module); report and modules
+> in `plan/E4/`. `ParamsR` = today's class minus the old `extra_patV`, plus the D5 λ-field, plus
+> E3's ten fields, text for text (checked mechanically): this is R5's list. `natParamsR` over `envA`
+> proves every field but `ctor_sort` (sort inversion, as before), with ranks ℕ 0, zero 1, succ 1,
+> rec 2 (D5's table said succ 2, rec 3; either works), `below` prefixes shown equal to the `Ordered`
+> chain by `VEnv.ext`, `pat_defeq` and the λ-field's open equation derived from the rule's `extra`
+> instance by weaken + `appDF` + `beta` with no inversion (spec lemma (f) not needed), and NatParams'
+> `iotaSuccLam_wf`/`iotaZeroLam_wf` proved. No field had to change: no finding against R5.
 
 
 Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.

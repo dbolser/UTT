@@ -191,7 +191,11 @@ far the field holds only for rule-free environments
 (`docs/params/EmptyParams.lean`; `natParams` over the constants-only `ℕ`
 environment). The plan's restatement, on λ-telescopes with the rule's open
 typed equation, is D5 of `docs/const-case/PLAN.md`; `docs/params/README.md`
-has the details.
+has the details. Experiment E4 (`docs/const-case/plan/E4/`, 2026-10-20) has
+the full post-plan field list as a structure and proves every field but
+`ctor_sort` for the `ℕ` environment with its two λ-wrapped rules, closing the
+two routine typing sorries on the way; it lands as R5 (the class) and R12 (the
+instance).
 
 Building a `Params` instance for the environments Lean4Lean actually produces
 depends on the inductive-type specification in `Theory/Inductive.lean`, which
@@ -317,9 +321,9 @@ historical (`0fadc0c`). The stage-1a constructor clause followed the same
 route (experiment E2, two verified attempts, then R3 as `2c5a205`), and the
 environment-indexed strong judgment landed as R4 (`9dcefbc`, verified
 independently; nine more `docs/` experiments went historical). E3 (the rank
-measure and `Pattern.gen`) and E5 (λ-wrapped rules) passed on 2026-10-20, two
-verified attempts each. Next: E4 (the ℕ instance of the new fields) and
-E6a/E6 (the pattern leaf), then the landings R5 to R11.
+measure and `Pattern.gen`), E5 (λ-wrapped rules) and E4 (the ℕ instance of
+the new fields) passed on 2026-10-20, two verified attempts each. Next: E6a/E6
+(the pattern leaf), then the landings R5 to R11.
 
 **Known risks** (`PLAN.md` §4 and its audit log). The shape-level iota match
 binds a field variable to the raw field shape, and a constructor shape counts

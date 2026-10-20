@@ -78,6 +78,18 @@ Audit round 3:
 | `ExtraLamStmt.lean` | The statement of the `extra` case of `strongSoundS` for λ-wrapped rules, with the λ-form `extra_patV` as an explicit hypothesis (experiment E5); one marked sorry. |
 | `RhsLowerStmt.lean` | `Valuation.lower` and the statement of the lowering lemma `rhs_lower` for the pattern leaf (experiment E6a); three marked sorries, two inherited from `PatLeafStmt2.lean`. |
 
+## E4/ (the ℕ instance of the new fields, PASSED 2026-10-20)
+
+`E4/E4-REPORT.md` is the report. `E4/NatParamsA.lean` (attempt a, over E3 attempt a's module)
+and `E4/NatParamsA-b.lean` (attempt b, over E3 attempt b's) each define `ParamsR`, the
+post-R5/R6 `Params` field list (today's class minus the old `extra_patV`, plus D5's λ-field,
+plus E3's ten fields, text for text), and `natParamsR : ParamsR` over `envA` with every field
+proved except `ctor_sort` (the known sort-inversion block); NatParams' `iotaSuccLam_wf` and
+`iotaZeroLam_wf` are proved along the way. `E4/Check.lean` is the tracer check;
+`E4/cmp_fields-b.py` is attempt b's mechanical field comparison. Module files, excluded from
+`../check.sh`; the report's §4 says how to rebuild. Pins R5's field list; R12 is this file over
+the real class.
+
 ## E3/ (the rank measure and `Pattern.gen`, PASSED 2026-10-20)
 
 `E3/E3-REPORT.md` is the report. `E3/Measure7.lean` (attempt a) and `E3/Measure7-b.lean`
