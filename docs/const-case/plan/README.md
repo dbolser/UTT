@@ -14,7 +14,9 @@ clash with `VEnv.below`, `IsDefEqStrong E`, `mkSE` and `telescope` since R4,
 likewise. `SelfType` clashes with `mkInst_instL` (`Experimental/PatternGen.lean`)
 since R5. `LamRuleTyped` and `ExtraLamStmt` clash with `typed_beta_rule`,
 `typed_beta_rhs` and `strongSoundS_extra_lam` since R6, which landed them (with
-`extra_patV` restated on λ-telescopes, PLAN D5). `../check.sh` typechecks the
+`extra_patV` restated on λ-telescopes, PLAN D5). `Beyond` clashes with
+`Const.beyond` (`Experimental/ShapeLogRelAdequacy.lean`) since R9, which landed
+it (with the spine lemma, PLAN D4). `../check.sh` typechecks the
 rest. All are sorry-free except the four `*Stmt*.lean` files, whose theorem
 bodies are deliberate sorries (they pin statements for the experiments).
 `PLAN.md` cites them by bare name, with the tag [T].

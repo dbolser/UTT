@@ -233,27 +233,6 @@ def LR.LocalIH (rank : Name → Nat) (Γ₀ : List SExpr) (ρ₀ : Valuation) (c
   ∀ m e, R m e → ∀ c' ls' ci', e = .const c' ls' → rank c' = rank c →
     Params.env.constants c' = some ci' → ls'.length = ci'.uvars → LR.ConstGoal Γ₀ ρ₀ m c' ls' ci'
 
-/-- The spine lemma (R9; PLAN D4, `PatLeafStmt2.lean`): induction on `Const`, at every valuation
-above the telescope valuation that a `SubstWF` covers, goal at every typed shape below. `hR`
-(the `R`-premise of `LE_Interp.const` is interpreted at `ρ₀`) was added by experiment E6a: without
-it the pattern leaf is false (a fixed leaf that is not a self occurrence is unconstrained). -/
-theorem LR.const_spine {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
-    (WFIH : LR.WFIH Params.rank Γ₀ k) {c : Name} {ci : VConstant} {ls : List SLevel}
-    (hc : Params.rank c < k) (h1 : Params.env.constants c = some ci) (h2 : ls.length = ci.uvars)
-    {R : TShape → SExpr → Prop} (LIH : LR.LocalIH Params.rank Γ₀ ρ₀ c R)
-    (hR : ∀ m e, R m e → LE_Interp ρ₀ m e)
-    {n : Nat} {rargs : List (WShape n)} {mC : TShape} (hC : LE_Interp.Const c ls R rargs mC)
-    {Ts : List SExpr} {B : SExpr} (hT : mkInst ls ci.type = Ts.foldr .forallE B)
-    (hk : rargs.length = Ts.length)
-    {ρ : Valuation} {σ σ' : Subst} (hρ : (Valuation.ofRargs rargs).LE ρ)
-    (W : LR.SubstWF Γ₀ σ σ' (Ts.reverse ++ Γ₀) ρ)
-    {n'} {m a : WShape n'} (le : m.T ≤ mC) (hA : LE_Interp ρ a.T B) (hmem : m.HasType a)
-    (tyV : ∀ {τ τ'}, LR.SubstWF Γ₀ τ τ' (Ts.reverse ++ Γ₀) ρ →
-      (LR Γ₀).TyDefEq (B.subst τ) (B.subst τ') a) :
-    (LR Γ₀).DefEq ((openSpine c ls Ts.length).subst σ) ((openSpine c ls Ts.length).subst σ')
-      (B.subst σ) m a := by
-  sorry -- SORRY(E3): spine lemma (R9)
-
 /-- The E6 interface (R10 proves exactly this; R9 calls it at `Const.pat`), `PatLeafStmt2.lean:168`
 with the real `Pattern.gen`, the repo's `IsDefEqStrong E`, and E6a's `hR`. -/
 theorem LR.pat_leaf_1a {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
@@ -281,6 +260,524 @@ theorem LR.pat_leaf_1a {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
     (LR Γ₀).DefEq ((openSpine c ls Ts.length).subst σ) ((openSpine c ls Ts.length).subst σ')
       (B.subst σ) m a := by
   sorry -- SORRY(E3): pat leaf (E6/R10)
+
+/-! ### The spine lemma (PLAN D4, R9) -/
+
+/-- The head of a matched pattern is the constant matched. -/
+theorem LE_Interp.Matches.head {p : Pattern} {n} {c : Name} {rargs : List (WShape n)} {m}
+    (H : LE_Interp.Matches p c rargs m) : p.head = c := by
+  induction H with
+  | const => rfl
+  | var _ ih => exact ih
+  | app _ _ ih _ => exact ih
+
+/-- A successor-level shape below `indTy` is `⊥` or `indTy`. -/
+theorem le_indTy_succ {k j : Nat} {s : WShape (k+1)}
+    (h : s.T ≤ (WShape.indTy : WShape (j+1)).T) : s = .bot ∨ s = .indTy := by
+  have l1 : k + 1 ≤ max k j + 1 := Nat.succ_le_succ (Nat.le_max_left ..)
+  have l2 : j + 1 ≤ max k j + 1 := Nat.succ_le_succ (Nat.le_max_right ..)
+  have h' := (TShape.LE.def l1 l2).1 h
+  rw [WShape.lift_indTy] at h'
+  obtain e | e := WShape.le_indTy.1 h'
+  · exact .inl ((WShape.lift_eq_bot l1).1 e)
+  · refine .inr (WShape.indTy_le.1 ?_)
+    rw [← WShape.lift_le_lift l1, e, WShape.lift_indTy]; exact WShape.LE.rfl
+
+theorem sort_not_le_indTy {n j : Nat} {r : Bool} :
+    ¬ (WShape.sort r : WShape n).T ≤ (WShape.indTy : WShape (j+1)).T := by
+  intro h
+  have l1 : n ≤ max n j + 1 := Nat.le_succ_of_le (Nat.le_max_left ..)
+  have l2 : j + 1 ≤ max n j + 1 := Nat.succ_le_succ (Nat.le_max_right ..)
+  have h' := (TShape.LE.def l1 l2).1 h
+  rw [WShape.lift_sort, WShape.lift_indTy] at h'
+  obtain e | e := WShape.le_indTy.1 h' <;> cases congrArg (·.1) e
+
+/-- `foldr .forallE` injectivity at equal telescope lengths (`SExpr` form). -/
+theorem foldr_forallE_inj : ∀ {Hs Hs' : List SExpr} {B B' : SExpr}, Hs.length = Hs'.length →
+    Hs.foldr .forallE B = Hs'.foldr .forallE B' → Hs = Hs' ∧ B = B'
+  | [], [], _, _, _, h => ⟨rfl, h⟩
+  | A :: Hs, A' :: Hs', _, _, hl, h => by
+    simp only [List.foldr_cons, SExpr.forallE.injEq] at h
+    obtain ⟨h1, h2⟩ := foldr_forallE_inj (by simpa using hl) h.2
+    exact ⟨by rw [h.1, h1], h2⟩
+
+/-- A telescope whose tail is not a Π is maximal: any other `foldr .forallE` decomposition of the
+same expression is no longer. -/
+theorem foldr_forallE_len_le : ∀ {Hs Ts : List SExpr} {B₁ B₂ : SExpr},
+    (∀ X Y, B₂ ≠ .forallE X Y) → Hs.foldr .forallE B₁ = Ts.foldr .forallE B₂ →
+    Hs.length ≤ Ts.length
+  | [], _, _, _, _, _ => Nat.zero_le _
+  | _ :: _, [], _, _, hB, h => by simp only [List.foldr_cons, List.foldr_nil] at h; cases hB _ _ h.symm
+  | _ :: Hs, _ :: Ts, _, _, hB, h => by
+    simp only [List.foldr_cons, SExpr.forallE.injEq] at h
+    simpa using foldr_forallE_len_le (Hs := Hs) (Ts := Ts) hB h.2
+
+omit [Params] in
+/-- `VExpr` form: two telescopes with non-Π tails agree. -/
+theorem vfoldr_forallE_inj : ∀ {Hs Hs' : List VExpr} {B B' : VExpr},
+    (∀ X Y, B ≠ .forallE X Y) → (∀ X Y, B' ≠ .forallE X Y) →
+    Hs.foldr .forallE B = Hs'.foldr .forallE B' → Hs = Hs' ∧ B = B'
+  | [], [], _, _, _, _, h => ⟨rfl, h⟩
+  | [], _ :: _, _, _, hB, _, h => by cases hB _ _ h
+  | _ :: _, [], _, _, _, hB', h => by cases hB' _ _ h.symm
+  | A :: Hs, A' :: Hs', _, _, hB, hB', h => by
+    simp only [List.foldr_cons, VExpr.forallE.injEq] at h
+    obtain ⟨h1, h2⟩ := vfoldr_forallE_inj hB hB' h.2
+    exact ⟨by rw [h.1, h1], h2⟩
+
+omit [Params] in
+theorem vfoldr_app_ne_forallE {h : VExpr} (hh : ∀ X Y, h ≠ .forallE X Y) :
+    ∀ (args : List VExpr) X Y, args.foldr (fun A acc => acc.app A) h ≠ .forallE X Y
+  | [], _, _ => hh _ _
+  | _ :: _, _, _ => by simp only [List.foldr_cons]; exact fun h => by cases h
+
+omit [Params] in
+theorem vfoldr_app_eq_const {I I' : Name} {us us' : List VLevel} :
+    ∀ (args : List VExpr), args.foldr (fun A (acc : VExpr) => acc.app A) (VExpr.const I us) =
+      VExpr.const I' us' →
+      args = [] ∧ I = I'
+  | [], h => by cases h; exact ⟨rfl, rfl⟩
+  | _ :: _, h => nomatch h
+
+/-- The stage-1a constructor data: the constructor's type is `Fs.foldr .forallE (.const I …)`
+with `Fs` of the classified arity, `I` an inductive with no indices, each field type a closed
+inductive constant. -/
+theorem ctor_data {c : Name} {k : Nat} {ci : VConstant}
+    (hcl : Params.classify c = some (.ctor k)) (h1 : Params.env.constants c = some ci) :
+    ∃ (I : Name) (Fs : List VExpr), Fs.length = k ∧ Params.classify I = some (.indTy 0) ∧
+      ci.type = Fs.foldr .forallE (.const I (VLevel.params ci.uvars)) ∧
+      ∀ T ∈ Fs, ∃ (I' : Name) (us : List VLevel), T = .const I' us ∧
+        Params.classify I' = some (.indTy 0) := by
+  obtain ⟨I, Fs, e1, hF⟩ := Params.ctor_fields_closed (cl := .ctor k) rfl hcl h1
+  obtain ⟨I₂, Fs₂, args, hl, hI₂, e2⟩ := Params.ctor_syn (cl := .ctor k) rfl hcl h1
+  obtain ⟨rfl, e3⟩ := vfoldr_forallE_inj (fun _ _ h => by cases h)
+    (vfoldr_app_ne_forallE (fun _ _ h => by cases h) args) (e1.symm.trans e2)
+  obtain ⟨rfl, rfl⟩ := vfoldr_app_eq_const args e3.symm
+  exact ⟨_, Fs, hl, hI₂, e1, hF⟩
+
+theorem indTy_not_le_ctor' {n j : Nat} {c : Name} {l : List (WShape j)} :
+    ¬ (WShape.indTy : WShape (n+1)).T ≤ (WShape.ctor' c l).T := by
+  intro h
+  have l1 : n + 1 ≤ max n j + 1 := Nat.succ_le_succ (Nat.le_max_left ..)
+  have l2 : j + 1 ≤ max n j + 1 := Nat.succ_le_succ (Nat.le_max_right ..)
+  have h' := (TShape.LE.def l1 l2).1 h
+  rw [WShape.lift_indTy, WShape.lift_ctor' (Nat.le_max_right ..), WShape.indTy_le] at h'
+  unfold WShape.ctor' at h'; split at h' <;> cases congrArg (·.1) h'
+
+/-- A constructor shape below a `ctor'` shape: same constructor, fields pointwise below. -/
+theorem ctor_le_ctor'_T {j n : Nat} {c c' : Name} {l : List (WShape j)} {h}
+    {L : List (WShape n)} (H : (WShape.ctor c' l h).T ≤ (WShape.ctor' c L).T) :
+    c' = c ∧ List.Forall₂ (fun x y => x.T ≤ y.T) l L := by
+  have l1 : j ≤ max j n := Nat.le_max_left ..
+  have l2 : n ≤ max j n := Nat.le_max_right ..
+  have H' := (TShape.LE.def (Nat.succ_le_succ l1) (Nat.succ_le_succ l2)).1 H
+  rw [WShape.lift_ctor l1, WShape.lift_ctor' l2, WShape.ctor_le] at H'
+  obtain ⟨l', h', e, hle⟩ := H'
+  unfold WShape.ctor' at e; split at e
+  · rw [WShape.ctor.inj] at e; obtain ⟨rfl, rfl⟩ := e
+    refine ⟨rfl, ?_⟩
+    rw [List.forall₂_map_left_iff, List.forall₂_map_right_iff] at hle
+    exact Lean4Lean.List.Forall₂.imp (fun _ _ hxy => (TShape.LE.def l1 l2).2 hxy) hle
+  · cases congrArg (·.1) e
+
+/-- Above a typed constructor shape, the type is (above) `indTy`. -/
+theorem indTy_le_of_ctor_le {j : Nat} {c : Name} {l : List (WShape j)} {h} {x a : TShape}
+    (H : (WShape.ctor c l h).T ≤ x) (hx : x.HasType a) :
+    (WShape.indTy : WShape (j+1)).T ≤ a := by
+  let K := max j (max x.1 a.1)
+  have hK := Nat.max_le.1 (Nat.le_refl K); rw [Nat.max_le] at hK
+  have l1 : j + 1 ≤ K + 1 := Nat.succ_le_succ hK.1
+  have lx : x.1 ≤ K + 1 := Nat.le_succ_of_le hK.2.1
+  have la : a.1 ≤ K + 1 := Nat.le_succ_of_le hK.2.2
+  have H' := (TShape.LE.def l1 lx).1 H
+  rw [WShape.lift_ctor hK.1, WShape.ctor_le] at H'
+  obtain ⟨l', h', e, _⟩ := H'
+  have hx' := (TShape.HasType.def lx la).1 hx
+  rw [e] at hx'
+  refine (TShape.LE.def l1 la).2 ?_
+  rw [WShape.lift_indTy]
+  generalize a.2.lift (K+1) = a' at hx'
+  cases a' using WShape.casesOn' with
+  | indTy => exact WShape.LE.rfl
+  | bot => cases congrArg (·.1) (WShape.HasType.bot_r hx')
+  | sort => exact absurd hx' WShape.HasType.ctor_isType
+  | forallE => exact absurd hx' WShape.HasType.ctor_not_forallE
+  | lam => exact absurd hx' nofun
+  | ctor => exact absurd hx' nofun
+
+theorem LRS.FieldsEq.snoc {Γ : List SExpr} {j : Nat} {IH : LogRel Γ j} {X Y T : SExpr} {p : WShape j}
+    (hXY : Γ ⊢ X ≡ Y : T) (hp : LRS.FieldRel IH X Y T p) :
+    ∀ {Ts Xs Ys l}, LRS.FieldsEq IH Ts Xs Ys l →
+      LRS.FieldsEq IH (Ts ++ [T]) (Xs ++ [X]) (Ys ++ [Y]) (l ++ [p])
+  | _, _, _, _, .nil => .cons hXY hp .nil
+  | _, _, _, _, .cons h1 h2 h3 => .cons h1 h2 (LRS.FieldsEq.snoc hXY hp h3)
+
+theorem range_succ_map (σ : Subst) (k : Nat) :
+    (List.range (k+1)).reverse.map σ = (List.range k).reverse.map σ.tail ++ [σ.head] := by
+  simp [List.range_succ_eq_map, List.map_reverse, List.map_map, Function.comp_def, Subst.tail,
+    Subst.head]
+
+/-- One closed field of a `SubstWF` entry is a `FieldRel` at every shape below the entry's
+valuation slot: typed `q' ≤ q` at `indTy` is `⊥` (trivial) or a constructor shape, which forces the
+entry's type shape `a` above `indTy`, so `Subst1` applies at `indTy`. -/
+theorem LR.fieldRel_of_entry {Γ₀ : List SExpr} {j : Nat} {G X X' : SExpr} {τ τ' : Subst}
+    {ρ' : Valuation} {x a : TShape} {q : WShape j}
+    (hG : ClosedN G) (hGa : LE_Interp ρ' a G) (hxa : x.HasType a)
+    (hS1 : LR.Subst1 Γ₀ X X' G.lift (G.subst τ) (G.subst τ') (ρ'.push x))
+    (hq : q.T ≤ x) : LRS.FieldRel (LR Γ₀ (n := j)) X X' G q := by
+  cases j with
+  | zero => trivial
+  | succ j =>
+    intro q' hq' ht'
+    cases ht'.unfold with
+    | bot h => exact (LR Γ₀).bot h
+    | @ctor _ c l wf =>
+      have hx := (WShape.LE.T hq').trans hq
+      have hIa := indTy_le_of_ctor_le hx hxa
+      have := ((hS1.2 (n := j+1) WShape.indTy (LE_Interp.weak (hGa.mono hIa))).2
+        (m := WShape.ctor c l wf) (LE_Interp.bvar hx) WShape.HasType.ctor)
+      rwa [hG.subst_eq .zero] at this
+
+/-- The constructor fields of a telescope of closed types, read off a `SubstWF` entry by entry
+(the context is `Gs ++ Γ₀`, newest entry first; the fields come out oldest first). -/
+theorem LR.fieldsEq_of_W {Γ₀ : List SExpr} {j : Nat} :
+    ∀ (Gs : List SExpr) {σ σ' : Subst} {ρ : Valuation} {n : Nat} {rargs : List (WShape n)}
+      {L : List (WShape j)},
+    (∀ T ∈ Gs, ClosedN T) →
+    LR.SubstWF Γ₀ σ σ' (Gs ++ Γ₀) ρ → (Valuation.ofRargs rargs).LE ρ →
+    List.Forall₂ (fun x y => x.T ≤ y.T) L rargs →
+    rargs.length = Gs.length →
+    LRS.FieldsEq (LR Γ₀ (n := j)) Gs.reverse ((List.range Gs.length).reverse.map σ)
+      ((List.range Gs.length).reverse.map σ') L.reverse
+  | [], _, _, _, _, rargs, L, _, _, _, hL, hlen => by
+    obtain rfl : rargs = [] := List.eq_nil_of_length_eq_zero hlen
+    cases hL; exact .nil
+  | G :: Gs, σ, σ', ρ, n, rargs, L, hcl, W, hρ, hL, hlen => by
+    obtain _ | ⟨r, rargs⟩ := rargs; · cases hlen
+    obtain _ | ⟨hq, hL⟩ := hL
+    generalize eΓ : (G :: Gs) ++ Γ₀ = Γ at W
+    cases W with
+    | id _ => exact absurd (congrArg List.length eΓ) (by simp; omega)
+    | cons W' _ hGa hxa _ hS1 =>
+      simp only [List.cons_append, List.cons.injEq] at eΓ; obtain ⟨rfl, rfl⟩ := eΓ
+      have ⟨hρ', hrx⟩ := Valuation.LE.push.1 (show ((Valuation.ofRargs rargs).push r.T).LE _ from hρ)
+      have hG := hcl G (.head _)
+      have IH := LR.fieldsEq_of_W Gs (fun T h => hcl T (.tail _ h)) W' hρ' hL
+        (by simpa using hlen)
+      have hEq := hS1.1; rw [hG.subst_eq .zero] at hEq
+      rw [List.reverse_cons, List.reverse_cons, List.length_cons, range_succ_map,
+        range_succ_map]
+      exact LRS.FieldsEq.snoc hEq (LR.fieldRel_of_entry hG hGa hxa hS1 (hq.trans hrx)) IH
+
+theorem closedN_foldr {B : SExpr} (hB : ClosedN B) :
+    ∀ {Ts : List SExpr}, (∀ T ∈ Ts, ClosedN T) → ClosedN (Ts.foldr .forallE B)
+  | [], _ => hB
+  | T0 :: _, h => ⟨h T0 (.head _), (closedN_foldr hB fun T' h' => h T' (.tail _ h')).mono
+      (Nat.zero_le _)⟩
+
+/-- A spine over a closed non-dependent telescope, from the fields' equations. -/
+theorem spine_typed {Γ : List SExpr} {j : Nat} {IH : LogRel Γ j} {B : SExpr} (hB : ClosedN B) :
+    ∀ {Ts Xs Ys : List SExpr} {l}, LRS.FieldsEq IH Ts Xs Ys l → (∀ T ∈ Ts, ClosedN T) →
+    ∀ {h h' : SExpr}, Γ ⊢ h ≡ h' : Ts.foldr .forallE B → Γ ⊢ spine h Xs ≡ spine h' Ys : B
+  | _, _, _, _, .nil, _, _, _, H => H
+  | T0 :: Ts, _, _, _, .cons hXY _ hF, hcl, _, _, H => by
+    have hcl' : ∀ T ∈ Ts, ClosedN T := fun T' h' => hcl T' (.tail _ h')
+    have H' := IsDefEq.appDF H hXY
+    rw [SExpr.inst, (closedN_foldr hB hcl').subst_eq .zero] at H'
+    exact spine_typed hB hF hcl' H'
+
+/-- Beyond the syntactic telescope every `Const` output is `⊥`, given the three arity bounds
+(from docs/const-case/plan/historical/Beyond.lean, verbatim). -/
+theorem Const.beyond {c : Name} {ls : List SLevel} {R : TShape → SExpr → Prop} {n N : Nat}
+    (hctor : ∀ k, Params.classify c = some (.ctor k) → k ≤ N)
+    (hind : ∀ k, Params.classify c = some (.indTy k) → k ≤ N)
+    (hpat : ∀ {p : Pattern} {r : p.RHS × p.Check} {rargs' : List (WShape n)} {m'},
+      Params.Pat p r → LE_Interp.Matches p c rargs' m' → rargs'.length ≤ N)
+    {rargs : List (WShape n)} {m : TShape}
+    (H : LE_Interp.Const c ls R rargs m) (hlen : N < rargs.length) : m ≤ TShape.bot := by
+  induction H with
+  | bot => exact TShape.bot_le'
+  | @lam f rargs m _ h2 ih =>
+    have hf : ¬ f.NonZero := by
+      intro hnz
+      obtain ⟨⟨x, y⟩, hmem, hy⟩ := WShapeFun.NonZero.iff.1 hnz
+      have hy' := ih x y hmem (by simp; omega)
+      exact hy (WShape.LE.of_T (hy'.trans TShape.bot_eqv.2))
+    have : WShape.lam' f = .bot := by simp [WShape.lam', hf]
+    rw [this] at h2; exact h2.trans TShape.bot_eqv.1
+  | ctor h1 _ => have := hctor _ h1; omega
+  | indTy h1 _ => have := hind _ h1; omega
+  | pat h1 h2 _ => have := hpat h1 h2; omega
+
+/-- The three arity bounds of `Const.beyond` at `N = Ts.length`, when the remaining type `B` is
+not syntactically a Π: ctor arity by `ctor_syn`/`ctor_fields_closed` (via `ctor_data`, needs
+only that the tails are not Π), indTy arity `0` by `indTy_closed`, pattern arity by
+`Params.pat_arity` (spec lemma (e)). -/
+theorem beyond_bounds {c : Name} {ci : VConstant} {ls : List SLevel} {Ts : List SExpr}
+    {B : SExpr} (h1 : Params.env.constants c = some ci)
+    (hT : mkInst ls ci.type = Ts.foldr .forallE B) (hB : ∀ X Y, B ≠ .forallE X Y) :
+    (∀ k, Params.classify c = some (.ctor k) → k ≤ Ts.length) ∧
+    (∀ k, Params.classify c = some (.indTy k) → k ≤ Ts.length) ∧
+    (∀ {n} {p : Pattern} {r : p.RHS × p.Check} {rargs' : List (WShape n)} {m'},
+      Params.Pat p r → LE_Interp.Matches p c rargs' m' → rargs'.length ≤ Ts.length) := by
+  refine ⟨fun k hk => ?_, fun k hk => ?_, fun hP hM => ?_⟩
+  · obtain ⟨_, Fs, _, hl, _, e⟩ := Params.ctor_syn (cl := .ctor k) rfl hk h1
+    rw [e, mkInst_foldr_forallE] at hT
+    simpa [hl, Classification.arity] using foldr_forallE_len_le hB hT
+  · exact (Params.indTy_closed hk h1).1 ▸ Nat.zero_le _
+  · have e := LE_Interp.Matches.head hM
+    have hA := hM.arity; rw [← e] at hA
+    obtain ⟨Hs, B', hl, e'⟩ := Params.pat_arity hP (e ▸ h1) hA
+    rw [e', mkInst_foldr_forallE] at hT
+    simpa [hl] using foldr_forallE_len_le hB hT
+
+/-- The last domain of a strongly typed telescope, in its telescope context. -/
+theorem tel_last {E : VEnv} {A B : SExpr} :
+    ∀ {Ts : List SExpr} {Γ : List SExpr}, TelStrongE E Γ (Ts ++ [A]) B →
+      ∃ u, IsDefEqStrong E (Ts.reverse ++ Γ) A A (.sort u)
+  | [], _, .cons hA _ => ⟨_, hA⟩
+  | T0 :: Ts, Γ, .cons _ H => by
+    obtain ⟨u, h⟩ := tel_last (Ts := Ts) H
+    exact ⟨u, by simpa using h⟩
+
+theorem subst_tail_cons_head (σ : Subst) : σ.tail.cons σ.head = σ := by
+  funext i; cases i <;> rfl
+
+theorem openSpine_succ (c : Name) (ls : List SLevel) (k : Nat) (σ : Subst) (x : SExpr) :
+    (openSpine c ls (k+1)).subst (σ.cons x) = ((openSpine c ls k).subst σ).app x := by
+  rw [openSpine_subst, openSpine_subst, range_succ_map, spine_snoc]; rfl
+
+/-- The `f`-pair above a typed input: `lam' g ≤ lam' f` at levels `j`, `n`, and `p : WShape j`
+give `(x₀, y₀) ∈ f` with `x₀ ≤ p` and `g p ≤ y₀` (as `TShape`s). -/
+theorem lam_pair {j n : Nat} {g : WShapeFun j} {f : WShapeFun n}
+    (H : (WShape.lam' g).T ≤ (WShape.lam' f).T) (p : WShape j) :
+    ∃ x₀ y₀, (x₀, y₀) ∈ f ∧ x₀.T ≤ p.T ∧ (g.app p).T ≤ y₀.T := by
+  have l1 : j ≤ max j n := Nat.le_max_left ..
+  have l2 : n ≤ max j n := Nat.le_max_right ..
+  have hgf := TShape.LE.lam'_decomp H
+  obtain ⟨x'', hx'', hmem⟩ := WShapeFun.app_eq (f.lift (max j n)) (p.lift (max j n))
+  obtain ⟨x₀, y₀, hm, rfl, e⟩ := (WShapeFun.mem_lift l2).1 hmem
+  refine ⟨x₀, y₀, hm, (TShape.LE.def l2 l1).2 hx'', (TShape.LE.def l1 l2).2 ?_⟩
+  rw [WShapeFun.lift_app l1, ← e]
+  exact WShapeFun.app_mono_l hgf _
+
+/-- `ValTyPi2` between syntactic Π types: the components, with the reflexive typed reduction. -/
+theorem valTyPi2_forallE {Γ : List SExpr} {j : Nat} {IH : LogRel Γ j} {X₁ Y₁ X₂ Y₂ : SExpr}
+    {b : WShape j} {f : WShapeFun j}
+    (H : LRS.ValTyPi2 IH (.forallE X₁ Y₁) (.forallE X₂ Y₂) b f) :
+    (∃ u, Γ ⊢ X₁ ≡ X₂ : .sort u) ∧ (∃ v, X₁ :: Γ ⊢ Y₁ ≡ Y₂ : .sort v) ∧
+      IH.TyDefEq X₁ X₂ b ∧ LRS.PiDefEq IH X₁ Y₁ Y₂ b f ∧
+      TyRedS Γ (.forallE X₁ Y₁) (.forallE X₁ Y₁) := by
+  obtain ⟨_, _, _, _, u, v, r1, r2, e1, e2, t, P⟩ := H
+  cases WHNF.forallE.whRedS r1.2; cases WHNF.forallE.whRedS r2.2
+  exact ⟨⟨u, e1⟩, ⟨v, e2⟩, t, P, r1⟩
+
+theorem push_inj {ρ ρ' : Valuation} {x x' : TShape} (h : ρ.push x = ρ'.push x') :
+    ρ = ρ' ∧ x = x' := ⟨funext fun i => congrFun h (i+1), congrFun h 0⟩
+
+/-- Type validity one binder further, from `PiDefEq` of the Π's type validity on the tail. -/
+theorem LR.tyV_succ {Γ₀ Δ : List SExpr} {ρ : Valuation} {A' B' : SExpr} {j : Nat}
+    {a₁ p : WShape j} {a₂ : WShapeFun j} (hp : p.HasType a₁) (hA₁ : LE_Interp ρ a₁.T A')
+    (tyV : ∀ {τ τ'}, LR.SubstWF Γ₀ τ τ' (Δ ++ Γ₀) ρ →
+      (LR Γ₀).TyDefEq ((SExpr.forallE A' B').subst τ) ((SExpr.forallE A' B').subst τ')
+        (WShape.forallE a₁ a₂)) :
+    ∀ {τ τ'}, LR.SubstWF Γ₀ τ τ' (A' :: (Δ ++ Γ₀)) (ρ.push p.T) →
+      (LR Γ₀).TyDefEq (B'.subst τ) (B'.subst τ') (a₂.app p) := by
+  intro τ τ' W₁
+  generalize eρ : ρ.push p.T = ρ₁ at W₁
+  generalize eΓ : A' :: (Δ ++ Γ₀) = Γ₁ at W₁
+  cases W₁ with
+  | id _ => exact absurd (congrArg List.length eΓ) (by simp; omega)
+  | cons W₁' _ _ _ _ hS1 =>
+    injection eΓ with eA eΓ'; subst eA eΓ'
+    obtain ⟨rfl, rfl⟩ := push_inj eρ
+    have hv := (hS1.2 a₁ (LE_Interp.weak hA₁)).2 (m := p) (.bvar .rfl) hp
+    have hty := tyV W₁'
+    simp only [LR, LRS, LRS.TyDefEq.forallE_iff, SExpr.subst] at hty
+    obtain ⟨_, _, _, P, _⟩ := valTyPi2_forallE hty
+    have t1 := (P.1 hp hS1.1 hv).1
+    have t2 := P.2 hp hS1.1.hasType.2 ((LR Γ₀).left ((LR Γ₀).symm hv))
+    rw [inst_lift_cons, inst_lift_cons] at t1 t2
+    have := (LR Γ₀).trans_ty t1 t2
+    rwa [subst_tail_cons_head, subst_tail_cons_head] at this
+
+/-- The spine lemma (R9; PLAN D4, `PatLeafStmt2.lean`): induction on `Const`, at every valuation
+above the telescope valuation that a `SubstWF` covers, goal at every typed shape below. `hR`
+(the `R`-premise of `LE_Interp.const` is interpreted at `ρ₀`) was added by experiment E6a: without
+it the pattern leaf is false (a fixed leaf that is not a self occurrence is unconstrained).
+
+Proved by induction on the `Const` derivation (PLAN D4, "The spine lemma (item R9)"; §4 Q7):
+* `bot`: `m = ⊥`.
+* `lam`: if `B` is not syntactically a Π, every output of the graph is `⊥` (`Const.beyond`, with
+  the three arity bounds `beyond_bounds`), so `m = ⊥`. If `B = .forallE A' B'`, the
+  `(lam, forallE)` row: the Π data from `tyV` (`valTyPi2_forallE`), `LamDefEq` from the IH at the
+  graph pair above each typed input (`lam_pair`), at `ρ.push p`, with `Adequate.cons` for the next
+  domain `A'` (strong typing from `EnvStrongR.of_params.const` + `IsDefEqStrong.telescope` +
+  `tel_last` + `weak_append`; its IH is the WF IH at `rank c < k`) and the next `tyV` from
+  `PiDefEq` (`LR.tyV_succ`).
+* `ctor`: the `(ctor c l, indTy)` row is `CtorDefEq`: the stage-1a type (`ctor_data`: `ctor_syn` +
+  `ctor_fields_closed` + `indTy_closed`) fixes `B = .const I ls` and closed fields; the fields are
+  read off `W` entry by entry (`LR.fieldsEq_of_W`, `LR.fieldRel_of_entry`), the spines are typed
+  from the fields' equations (`spine_typed`), the ambient reduction is typed from `tyV`.
+* `indTy`: `rargs = Ts = []`, `B` a sort, row `(indTy, sort)` through `LRS.TyDefEq`'s `indTy` row.
+* `pat`: `LR.pat_leaf_1a`, the remaining stub (E6/R10). -/
+theorem LR.const_spine {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
+    (WFIH : LR.WFIH Params.rank Γ₀ k) {c : Name} {ci : VConstant} {ls : List SLevel}
+    (hc : Params.rank c < k) (h1 : Params.env.constants c = some ci) (h2 : ls.length = ci.uvars)
+    {R : TShape → SExpr → Prop} (LIH : LR.LocalIH Params.rank Γ₀ ρ₀ c R)
+    (hR : ∀ m e, R m e → LE_Interp ρ₀ m e)
+    {n : Nat} {rargs : List (WShape n)} {mC : TShape} (hC : LE_Interp.Const c ls R rargs mC)
+    {Ts : List SExpr} {B : SExpr} (hT : mkInst ls ci.type = Ts.foldr .forallE B)
+    (hk : rargs.length = Ts.length)
+    {ρ : Valuation} {σ σ' : Subst} (hρ : (Valuation.ofRargs rargs).LE ρ)
+    (W : LR.SubstWF Γ₀ σ σ' (Ts.reverse ++ Γ₀) ρ)
+    {n'} {m a : WShape n'} (le : m.T ≤ mC) (hA : LE_Interp ρ a.T B) (hmem : m.HasType a)
+    (tyV : ∀ {τ τ'}, LR.SubstWF Γ₀ τ τ' (Ts.reverse ++ Γ₀) ρ →
+      (LR Γ₀).TyDefEq (B.subst τ) (B.subst τ') a) :
+    (LR Γ₀).DefEq ((openSpine c ls Ts.length).subst σ) ((openSpine c ls Ts.length).subst σ')
+      (B.subst σ) m a := by
+  induction hC generalizing Ts B ρ σ σ' n' m a with
+  | bot =>
+    cases show m = .bot from TShape.le_bot.1 (le.trans TShape.bot_eqv.1)
+    exact (LR _).bot hmem.isType
+  | @lam f rargs mC hf hle ih =>
+    by_cases hB : ∃ A' B', B = .forallE A' B'
+    case neg =>
+      -- (i) `B` is not syntactically a Π: every `f`-output is `⊥` (`Const.beyond`), so `m = ⊥`
+      have hB' : ∀ X Y, B ≠ .forallE X Y := fun X Y h => hB ⟨X, Y, h⟩
+      obtain ⟨hctor, hind, hpat⟩ := beyond_bounds h1 hT hB'
+      have hfz : ¬ f.NonZero := by
+        intro hnz
+        obtain ⟨⟨x, y⟩, hm, hy⟩ := WShapeFun.NonZero.iff.1 hnz
+        have := Const.beyond hctor hind hpat (hf x y hm) (by simp [hk])
+        exact hy (WShape.LE.of_T (this.trans TShape.bot_eqv.2))
+      rw [show WShape.lam' f = .bot by simp [WShape.lam', hfz]] at hle
+      cases show m = .bot from TShape.le_bot.1 (le.trans (hle.trans TShape.bot_eqv.1))
+      exact (LR _).bot hmem.isType
+    -- (ii) `B = .forallE A' B'`
+    obtain ⟨A', B', rfl⟩ := hB
+    cases hmem.unfold with
+    | bot h => exact (LR _).bot h
+    | sort => exact absurd (le.trans hle) TShape.sort_not_le_lam'
+    | forallE _ => exact absurd (le.trans hle) TShape.forallE_not_le_lam'
+    | ctor => exact absurd (le.trans hle) TShape.ctor_not_le_lam'
+    | indTy => exact absurd (le.trans hle) TShape.indTy_not_le_lam'
+    | @lam j g a₁ a₂ hg =>
+      by_cases hgz : g.NonZero
+      case neg =>
+        rw [show WShape.lam' g = .bot by simp [WShape.lam', hgz]]; exact (LR _).bot hmem.isType
+      have hgf := le.trans hle
+      rw [← WShape.lam_eq_lam' (hl := hgz)]
+      -- the next domain `A'`, strongly typed in `below (rank c)` (type_below → telescope)
+      have hT' : mkInst ls ci.type = (Ts ++ [A']).foldr .forallE B' := by
+        rw [hT, List.foldr_append]; rfl
+      obtain ⟨u₀, H₀⟩ := EnvStrongR.of_params.const ls h1
+      rw [hT'] at H₀
+      obtain ⟨u, HA₀⟩ := tel_last (IsDefEqStrong.telescope H₀)
+      have HAb : IsDefEqStrong (Params.env.below Params.rank (Params.rank c)) (Ts.reverse ++ Γ₀)
+          A' A' (.sort u) := by simpa using HA₀.weak_append (Γ₀ := Γ₀)
+      have cons := LR.Adequate.cons (fun hm ha hma => WFIH _ hc HAb hm ha hma)
+        (HAb.mono (Params.env.below_le ..))
+      have hA₁ := hA.forallE_inv.1
+      have eΓ : (Ts ++ [A']).reverse ++ Γ₀ = A' :: (Ts.reverse ++ Γ₀) := by simp
+      -- one argument further: the IH at the `f`-pair above the typed input
+      have key : ∀ {τ τ'}, LR.SubstWF Γ₀ τ τ' (Ts.reverse ++ Γ₀) ρ → ∀ {x x' : SExpr} {p : WShape j},
+          p.HasType a₁ → Γ₀ ⊢ x ≡ x' : A'.subst τ → (LR Γ₀).DefEq x x' (A'.subst τ) p a₁ →
+          (LR Γ₀).DefEq (((openSpine c ls Ts.length).subst τ).app x)
+            (((openSpine c ls Ts.length).subst τ').app x') (B'.subst (τ.cons x)) (g.app p) (a₂.app p) := by
+        intro τ τ' Wτ x x' p hp hx hv
+        obtain ⟨x₀, y₀, hm₀, hx₀p, hgy⟩ := lam_pair hgf p
+        have W' := cons hp hA₁ hx hv Wτ
+        have H := ih x₀ y₀ hm₀ (Ts := Ts ++ [A']) (B := B') hT' (by simp [hk])
+          (ρ := ρ.push p.T) (σ := τ.cons x) (σ' := τ'.cons x')
+          (Valuation.LE.push.2 ⟨hρ, hx₀p⟩) (eΓ ▸ W') hgy (hA.forallE_inv'.2 p)
+          ((WShape.HasTypeLam.iff.1 hg).2.2 p hp)
+          (fun W₁ => LR.tyV_succ (Δ := Ts.reverse) hp hA₁ tyV (eΓ ▸ W₁))
+        rwa [List.length_append, List.length_singleton, openSpine_succ, openSpine_succ] at H
+      -- the Π row of the goal: components from `tyV` (the Π's type validity), `LamDefEq` from `key`
+      have hty := tyV W
+      simp only [LR, LRS, LRS.TyDefEq.forallE_iff, SExpr.subst] at hty
+      obtain ⟨⟨u', e1⟩, ⟨v', e2⟩, tAA, P, rA⟩ := valTyPi2_forallE hty
+      simp only [LR, LRS, LRS.DefEq.lam_forallE, SExpr.subst]
+      refine ⟨_, _, u', v', rA, e1.hasType.1, (LR Γ₀).left_ty tAA, e2.hasType.1, P.left, ?_, ?_⟩
+      · intro x x' p hp hx hv
+        rw [inst_lift_cons]
+        refine ⟨key W.left hp hx hv, ?_⟩
+        have tB := P.2 hp hx.hasType.1 ((LR Γ₀).left hv)
+        rw [inst_lift_cons, inst_lift_cons] at tB
+        exact (LR Γ₀).conv ((LR Γ₀).symm_ty tB)
+          (key W.symm.left hp (e1.defeqDF hx) ((LR Γ₀).conv tAA hv))
+      · intro x p hp hx hv
+        rw [inst_lift_cons]
+        exact key W hp hx hv
+  | @ctor mC rargs hcl hle =>
+    obtain ⟨I, Fs, hFl, hI, hci, hF⟩ := ctor_data hcl h1
+    have hT' : (Fs.map (mkInst ls)).foldr .forallE (.const I ls) = Ts.foldr .forallE B := by
+      rw [← hT, hci, mkInst_foldr_forallE]; simp [mkInst, SLevel.instV_params h2]
+    obtain ⟨rfl, rfl⟩ := foldr_forallE_inj (by simp [hFl, hk]) hT'
+    have hclT : ∀ T ∈ Fs.map (mkInst ls), ClosedN T := by
+      intro T hT; obtain ⟨F, hF', rfl⟩ := List.mem_map.1 hT
+      obtain ⟨I', us, rfl, _⟩ := hF F hF'; trivial
+    have hBσ : ∀ τ : Subst, (SExpr.const I ls).subst τ = .const I ls := fun _ => rfl
+    rw [hBσ]
+    cases hmem.unfold with
+    | bot h => exact (LR _).bot h
+    | sort => exact absurd (le.trans hle) TShape.sort_not_le_ctor'
+    | forallE _ => exact absurd (le.trans hle) TShape.forallE_not_le_ctor'
+    | @lam _ f _ _ _ =>
+      by_cases hf : f.NonZero
+      · rw [← WShape.lam_eq_lam' (hl := hf)] at le
+        exact absurd (le.trans hle) TShape.lam_not_le_ctor'
+      · rw [show WShape.lam' f = .bot by simp [WShape.lam', hf]]; exact (LR _).bot hmem.isType
+    | indTy => exact absurd (le.trans hle) indTy_not_le_ctor'
+    | @ctor j c' l wf =>
+      obtain ⟨e, hl⟩ := ctor_le_ctor'_T (le.trans hle); subst c'
+
+      simp only [LR, LRS]; rw [LRS.DefEq.ctor_indTy]
+      have hlen : l.length = rargs.length := by
+        simpa using Lean4Lean.List.Forall₂.length_eq hl
+      have hL : List.Forall₂ (fun x y => x.T ≤ y.T) l.reverse rargs := by
+        simpa using (Lean4Lean.List.Forall₂.reverse (l := l) (l' := rargs.reverse)).2 hl
+      have FE := LR.fieldsEq_of_W (j := j) (Fs.map (mkInst ls)).reverse
+        (fun T h => hclT T (List.mem_reverse.1 h)) W hρ hL (by simpa using hk)
+      rw [List.reverse_reverse, List.reverse_reverse, List.length_reverse] at FE
+      have hc0 : Γ₀ ⊢ SExpr.const c ls : (Fs.map (mkInst ls)).foldr .forallE (.const I ls) :=
+        hT ▸ IsDefEq.const h1 h2
+      have Hsp := spine_typed (show ClosedN (SExpr.const I ls) from trivial) FE hclT hc0
+      have hty := tyV W
+      rw [hBσ, hBσ] at hty
+      simp only [LR, LRS, LRS.TyDefEq.indTy_m] at hty
+      obtain ⟨_, _, _, ⟨⟨w, e⟩, _⟩, _⟩ := hty
+      rw [openSpine_subst, openSpine_subst]
+      exact ⟨I, ls, ci, _, _, _, hlen ▸ hcl, hI, h1, hT, ⟨⟨w, e.hasType.1⟩, .rfl⟩,
+        ⟨Hsp.hasType.1, .rfl⟩, ⟨Hsp.hasType.2, .rfl⟩, FE⟩
+  | indTy hcl hle =>
+    obtain ⟨h0, u, hu⟩ := Params.indTy_closed hcl h1
+    obtain rfl : Ts = [] := List.eq_nil_of_length_eq_zero (hk ▸ h0)
+    simp only [List.foldr_nil] at hT
+    rw [hu] at hT; subst hT
+    simp only [openSpine, List.length_nil, List.range_zero, List.reverse_nil, List.map_nil,
+      spine_nil, mkInst, SExpr.subst]
+    cases hmem.unfold with
+    | bot h => exact (LR _).bot h
+    | sort => cases sort_not_le_indTy (le.trans hle)
+    | forallE _ => obtain e | e := le_indTy_succ (le.trans hle) <;> cases congrArg (·.1) e
+    | @lam _ f _ _ _ =>
+      obtain e | e := le_indTy_succ (le.trans hle)
+      · rw [e]; exact (LR _).bot hmem.isType
+      · unfold WShape.lam' at e; split at e <;> cases congrArg (·.1) e
+    | ctor => obtain e | e := le_indTy_succ (le.trans hle) <;> cases congrArg (·.1) e
+    | indTy =>
+      simp only [LR, LRS]
+      rw [LRS.DefEq.sort_a (by intro e; cases congrArg (·.1) e), LRS.TyDefEq.indTy_m]
+      have hty : Γ₀ ⊢ .const c ls : .sort (SLevel.instV ls u) := by
+        have := IsDefEq.const (Γ := Γ₀) h1 h2; rwa [hu] at this
+      exact ⟨⟨_, _, .sort⟩, c, ls, h0 ▸ hcl, ⟨⟨_, hty⟩, .rfl⟩, ⟨⟨_, hty⟩, .rfl⟩⟩
+  | pat hP hMt hRHS =>
+    obtain rfl := LE_Interp.Matches.head hMt
+    obtain ⟨g, hg⟩ := Option.isSome_iff_exists.1 (Params.pat_gen hP)
+    exact LR.pat_leaf_1a WFIH hc h1 h2 LIH hR hP hMt hRHS (Params.pat_check hP) g hg
+      (Params.pat_typed hP hg h1) (Params.pat_defeq hP hg h1) hT hk hρ W le hA hmem tyV
 
 /-- `LR.const_local` (PLAN D4): induction on `hM` through the `R`-closure. Its only recursive
 calls are the local IH on the `Const` premise's sub-derivations (`ih7`) and the WF IH at

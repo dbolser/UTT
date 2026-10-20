@@ -13,6 +13,7 @@ check() {
 # (D1/D2, R3); Measure and eight more plan/ files when IsDefEqStrong got its environment index
 # (D4, R4); Fuel and plan/SelfType when Pattern.gen and the rank fields landed (D4/D3, R5);
 # plan/LamRuleTyped and plan/ExtraLamStmt when extra_patV was restated on λ-telescopes (D5, R6).
+# plan/Beyond when the spine lemma landed (D4, R9).
 # All were typechecked at 3c35f59 and are kept for the record.
 for f in Stuck Reconcile IHVacuous Inert; do
   check "docs/const-case/$f.lean"

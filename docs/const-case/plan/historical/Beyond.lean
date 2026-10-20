@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before the spine lemma landed (docs/const-case/PLAN.md D4, landed by R9); no longer compiles.
 /-! Audit (circularity/measure, round 2): the spine lemma's `lam` case when the remaining type `B`
 is NOT syntactically a Π (e.g. `def f : MyFun := fun x => x` with `MyFun := Nat → Nat`).
 `hT : mkInst ls ci.type = Ts.foldr .forallE B` cannot be extended, so the case must be closed
