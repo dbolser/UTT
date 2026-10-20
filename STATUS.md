@@ -87,11 +87,12 @@ axioms reached (4):
   propext
   sorryAx
 constants directly containing sorry (1):
-  Lean4Lean.SExpr.LR.adequacy
+  Lean4Lean.SExpr.LR.const_spine
 ```
 
-No project-specific axioms remain. The one sorry on the path is the `const`
-case of the fundamental lemma (§6). The environment-side theorems
+No project-specific axioms remain. The one sorry on the path is the spine
+lemma of the fundamental lemma's `const` case (§6): since plan items R7 and
+R8 landed, the `const` case itself is proved up to that lemma. The environment-side theorems
 (`Params.const_wf`, `defeq_wf`, `extra_pat`, `ctor_ty`, `envStrongS`,
 `IsDefEq.strong`) reach no sorry at all. The tracer reports the path only:
 `grep sorry` finds about twenty more sorried lemmas in `SExpr.lean` and
@@ -171,6 +172,18 @@ green too. The tracer is not yet a pass/fail CI check (a good first task, §8).
   sorry-free instance of the class: `natParams` (over the rule-free `envC`)
   carries `pat_defeq` as a marked sorry, since that field is false without
   the rules (`docs/params/README.md`).
+- The fundamental lemma by well-founded induction on the rank bound:
+  `LR.adequacy_rank` proves the 14 cases over derivations in
+  `Params.env.below rank k` with the well-founded hypothesis `LR.WFIH`, the
+  13 existing case proofs going through unchanged (sub-derivations pass
+  through `soundSE`/`defeqE` and `VEnv.below_le`), and the `const` case is
+  the local induction `LR.const_local` (experiment E3) down to the pinned
+  spine-lemma stub `LR.const_spine`, which calls the pinned pattern-leaf stub
+  `LR.pat_leaf_1a`; `EnvStrongR`, `LR.WFIH`/`ConstGoal`/`LocalIH` and
+  `Valuation.ofRargs` come with it. `LR.adequacy` keeps its statement and is
+  recovered through `exists_below` and `Nat.strongRecOn` (plan items R7+R8;
+  `3a28c52`). The one sorry on the route moved from `LR.adequacy` to
+  `LR.const_spine`; the axiom set is unchanged.
 - Typed reductions in the logical relation (`TyRedS`, `TWHRedS`, `AmbSort`;
   the `sort_iff`, `sort_iff_ty`, `whr`, `whr_ty` fields take typed reductions,
   `(⊥, ·)` stays `True`; the other fifteen fields and every statement in
@@ -232,10 +245,14 @@ rule). These are limitations of the current model, not of the route.
 
 ## 6. The open problem: the `const` case of `LR.adequacy`
 
-`LR.adequacy` (`ShapeLogRelAdequacy.lean`, line ~150; the sorry is in the
-`const` case near line 198) is proven by induction on the strong derivation;
-13 of its 14 cases are done. The `const` case has been a sorry since the
-model started interpreting constants non-trivially (April 2026). Three
+`LR.adequacy` (`ShapeLogRelAdequacy.lean`) is proven by well-founded
+induction on a rank bound and then on the strong derivation
+(`LR.adequacy_rank`); all 14 cases are in, and the `const` case goes through
+the local induction `LR.const_local` down to the spine lemma `LR.const_spine`,
+which is the one remaining sorry (its statement is pinned; the pattern-leaf
+lemma `LR.pat_leaf_1a` that it calls is a second pinned stub reached only
+through it). The `const` case had been a sorry since the model started
+interpreting constants non-trivially (April 2026). Three
 independent design analyses on this fork, a five-lens adversarial review of
 them, and a merged, audited plan are in `docs/const-case/`; start with
 `docs/const-case/PLAN.md`. `./check.sh` there typechecks every experiment
@@ -292,8 +309,10 @@ the ordered work items are in `PLAN.md`).
    as a definitional equality (`pat_defeq`). Experiment E3 (two verified
    attempts, 2026-10-20; `docs/const-case/plan/E3/`) has `Pattern.gen` as a
    function with its seven specification lemmas, the ten fields exactly, and
-   the local induction `const_local` proved up to the spine lemma; it lands as
-   R5, R7 and R8.
+   the local induction `const_local` proved up to the spine lemma; all of it
+   landed as R5 (the fields and `Pattern.gen`), R7 (`LR.adequacy_rank`) and
+   R8 (the measure, `3a28c52`). What is left of this item is the spine lemma
+   (R9) and the pattern leaf (E6, R10).
 4. **Typed reductions in the relation** (done, `c6b258f`). All three designs missed this. At
    the pattern leaf the rule's right-hand side has type `motive (c Zs)` and
    the goal has type `motive x` with `x ⤳* c Zs`; converting between them at
@@ -345,8 +364,13 @@ environment-indexed strong judgment landed as R4 (`9dcefbc`, verified
 independently; nine more `docs/` experiments went historical). E3 (the rank
 measure and `Pattern.gen`), E5 (λ-wrapped rules) and E4 (the ℕ instance of
 the new fields) passed on 2026-10-20, two verified attempts each, and R5 (the
-fields, `Pattern.gen` and its lemmas in the repo) landed the same day. Next:
-E6a/E6 (the pattern leaf) and the landings R7, R8, R6, R12, then R9 to R11.
+fields, `Pattern.gen` and its lemmas in the repo) landed the same day, as did
+R7 and R8 (`3a28c52`: the rank induction and the measure; the one sorry is now
+the spine lemma). E6a (the pattern-leaf field lowering) found the plan's
+pinned lowering statement false and proved a corrected one; its one upstream
+change, the hypothesis `hR` on the spine lemma and the pattern leaf, is in.
+Next: E6 (the pattern leaf proper), then R9 (the spine lemma), R10, R11, and
+the off-path R6 and R12.
 
 **Known risks** (`PLAN.md` §4 and its audit log). The shape-level iota match
 binds a field variable to the raw field shape, and a constructor shape counts

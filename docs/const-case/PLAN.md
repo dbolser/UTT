@@ -74,6 +74,23 @@
 > is 3698 lines (+460). `docs/params/EmptyParams.lean` has the fields (no sorry); `NatParams.lean`
 > has them over `envC` with `pat_defeq` a marked sorry until R12 (false without rules); `Fuel.lean`
 > and `plan/SelfType.lean` went historical.
+>
+> **R7+R8 landed (2026-10-20, `3a28c52`, verified independently).** `LR.adequacy_rank {k} (WFIH :
+> LR.WFIH Params.rank Γ₀ k) (H : IsDefEqStrong (Params.env.below Params.rank k) Γ M N A) …` proves
+> the 14 cases; the 13 existing proofs needed only the mechanical substitutions (`soundS` →
+> `soundSE hE`, `.defeq` → `.defeqE hE`, `henv.closed*`/`extra_pat` through `hE.1`/`hE.2`,
+> `Adequate.cons ihA (HA.mono hE)` with `hE := VEnv.below_le ..`; `Adequate.cons` keeps its
+> `Params.env` statement, so the "`hE` form" option was not needed). The `const` case is
+> `LR.const_case WFIH h1 h2 hM hA hmem`. E3's measure (`EnvStrongR`/`of_params`, `Valuation.ofRargs`,
+> `WFIH`/`ConstGoal`/`LocalIH`, `const_spine` and `pat_leaf_1a` stubs, `const_local`, `const_case`) sits
+> in `ShapeLogRelAdequacy.lean` before `adequacy_rank`; `LR.adequacy_rank_wf` (`Nat.strongRecOn`) and
+> `LR.adequacy` (statement unchanged, via `exists_below`) follow. **Tracer first block now:
+> `constants directly containing sorry (1): Lean4Lean.SExpr.LR.const_spine`**, axioms unchanged.
+> **D4 amendment from E6a (see its report, `plan/E6a/`): `LR.const_spine` and `LR.pat_leaf_1a` take
+> `(hR : ∀ m e, R m e → LE_Interp ρ₀ m e)` after `LIH`;** `const_local` passes `LE_Interp.const`'s
+> last premise. Without it the pattern leaf (and the two stubs as E3 stated them) is false: a fixed
+> leaf that is not a self occurrence is otherwise unconstrained. R9's and R10's statements are the
+> landed ones.
 
 
 Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.
