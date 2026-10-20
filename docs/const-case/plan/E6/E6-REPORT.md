@@ -60,9 +60,21 @@ Step 6 converts the types with `tyV` at the substitution with the major replaced
 
 ## 3. Verification
 
-Attempt a's verifier (round 1) and attempt b's (rounds 1-2) confirmed: the pinned statement is
-reproduced, all 99 (a) / 186 (b) module constants contain sorry only in the gap helper(s), the
-gaps are real and not suppliable by R9, and the two candidate fields close them. R10's landing was
+The experiment ran to three verifier rounds per attempt (twelve agents in all), with the fix
+rounds unable to close the gaps, as expected. Every verifier confirmed: the pinned statement is
+reproduced, all module constants contain sorry only in the gap helper(s), the gaps are real, and
+R9's `Const` induction cannot supply them (they are properties of the rule's typing and the
+environment, not of the derivation; the junk shapes come from `LE_Interp.Const`'s argument shapes,
+which the spine lemma must range over). Attempt a's last fix round restated both gaps as closed
+facts about the rule and the environment, with no outer context: (A) from the closed reduction
+`[] ⊢ const I ls' ⤳* const I₂ ls₂` (head reduction is context-free, `T.whRedS_ctx`), proved when
+`I` has no delta rule or `c'` has no universe parameters; (B) as `v₁ = 0` for the sort of the
+recursor's codomain, over the recursor's own instantiated telescope. Its verifier gave a concrete
+allowed corner for (A), `def J.{u} := I'.{0}` as the major domain, and noted that both gap
+statements hold wherever unique typing holds and that the fields R10 added (`rec_major_indTy`,
+`rhs_not_field`) are exactly what closes them. The final `a/` and `b/` snapshots here are from
+before those last fix rounds; the restated gap lemmas live in attempt a's final `Gaps.lean` in the
+run's snapshot only. R10's landing was
 verified separately (clean rebuild, tracer, frozen statements, both docs check scripts): the
 tracer for `IsDefEq'.uniq` reads `axioms reached (3): Classical.choice, Quot.sound, propext;
 constants directly containing sorry (0)`.
