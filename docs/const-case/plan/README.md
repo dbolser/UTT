@@ -78,6 +78,19 @@ Audit round 3:
 | `ExtraLamStmt.lean` | The statement of the `extra` case of `strongSoundS` for λ-wrapped rules, with the λ-form `extra_patV` as an explicit hypothesis (experiment E5); one marked sorry. |
 | `RhsLowerStmt.lean` | `Valuation.lower` and the statement of the lowering lemma `rhs_lower` for the pattern leaf (experiment E6a); three marked sorries, two inherited from `PatLeafStmt2.lean`. |
 
+## E3/ (the rank measure and `Pattern.gen`, PASSED 2026-10-20)
+
+`E3/E3-REPORT.md` is the report. `E3/Measure7.lean` (attempt a) and `E3/Measure7-b.lean`
+(attempt b) each have `Pattern.gen` as a function with its spec lemmas (a)-(g), the D4/D3 field
+package `RankParams`, `EnvStrongR.of_params`, `WFIH`/`ConstGoal`/`LocalIH`, the statements of
+`const_spine` and `pat_leaf_1a` (the two marked sorries) and `const_local` proved, over the
+repo's `IsDefEqStrong E`/`VEnv.below`/`mkSE`. `E3/STATEMENTS-a.txt` is the statement list.
+`E3/Check.lean` is the axiom and tracer check; `E3/Toy.lean`, `E3/Toy2.lean` (a `Tree` with two
+recursive calls) and `E3/GenNat.lean` (`docs/params/NatParams.lean`'s environment, against
+`Measure7-b.lean`) evaluate `Pattern.gen` by `rfl`; `E3/Fidelity.lean` closes D4's literal
+`const_local` with the module's. Module files, excluded from `../check.sh`; the report's §5 says
+how to rebuild. Lands as R5 (definitions, spec lemmas, fields), R7 (WF shape), R8 (measure).
+
 ## E5/ (λ-wrapped rules, PASSED 2026-10-20)
 
 `E5/E5-REPORT.md` is the report. `E5/LamRules.lean` has D5's λ-`extra_patV` as the hypothesis

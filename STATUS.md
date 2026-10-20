@@ -263,7 +263,11 @@ the ordered work items are in `PLAN.md`).
    `9dcefbc`); the rank itself is next. New `Params` fields
    give the rank, the rank-bounded typing of constant types and of each rule's
    right-hand side in a computed pattern context (`Pattern.gen`), and the rule
-   as a definitional equality (`pat_defeq`). Skeleton: `Measure.lean`.
+   as a definitional equality (`pat_defeq`). Experiment E3 (two verified
+   attempts, 2026-10-20; `docs/const-case/plan/E3/`) has `Pattern.gen` as a
+   function with its seven specification lemmas, the ten fields exactly, and
+   the local induction `const_local` proved up to the spine lemma; it lands as
+   R5, R7 and R8.
 4. **Typed reductions in the relation** (done, `c6b258f`). All three designs missed this. At
    the pattern leaf the rule's right-hand side has type `motive (c Zs)` and
    the goal has type `motive x` with `x ⤳* c Zs`; converting between them at
@@ -312,9 +316,10 @@ in two, `LRS.LamDefEq.whr` becomes typed. Report and files:
 historical (`0fadc0c`). The stage-1a constructor clause followed the same
 route (experiment E2, two verified attempts, then R3 as `2c5a205`), and the
 environment-indexed strong judgment landed as R4 (`9dcefbc`, verified
-independently; nine more `docs/` experiments went historical). Next on the
-plan's critical path: E3 (the rank measure and `Pattern.gen`), then E6a/E6
-(the pattern leaf).
+independently; nine more `docs/` experiments went historical). E3 (the rank
+measure and `Pattern.gen`) and E5 (λ-wrapped rules) passed on 2026-10-20, two
+verified attempts each. Next: E4 (the ℕ instance of the new fields) and
+E6a/E6 (the pattern leaf), then the landings R5 to R11.
 
 **Known risks** (`PLAN.md` §4 and its audit log). The shape-level iota match
 binds a field variable to the raw field shape, and a constructor shape counts

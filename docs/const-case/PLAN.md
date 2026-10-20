@@ -42,6 +42,15 @@
 > layers are typed from the λ-closure of the open equation plus `IsDefEq.subst`, not layer by layer;
 > `IsDefEq.extra` is not used; and R6 must also swap `strongSoundS`'s `extra` case for
 > `strongSoundS_extra_lam`, since that case is the one remaining path from adequacy to `Params.extra_pat`.
+>
+> **E3 passed (2026-10-20).** Two verified attempts on `3bccfa8`; report, modules and `rfl`
+> evaluations in `plan/E3/`. `Pattern.gen` is a function; spec lemmas (a)-(g) are sorry-free and
+> general in `m`, `n`; `RankParams` has D4/D3's ten fields text for text (R5's list, E4's `ParamsR`);
+> `EnvStrongR.of_params` goes through the repo's `mkSE`; `const_local` is proved up to the
+> `const_spine` stub, with the WF IH as a hypothesis (`LR.WFIH`) as D4 states it. Choices recorded in
+> the report §2: `RP : RankParams` explicit; (c) with pointwise `σ` hypotheses; `rhs` the primary
+> option; `gen` checks `classify c' = .ctor n` and needs a syntactic `.const I us` major domain
+> (stage 1a); self abstraction is bare leaves only. R8's `const_case` wiring came for free.
 
 
 Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.
