@@ -544,13 +544,26 @@ class Params where
   --   Subpattern (.app p₁' p₂') p' → Subpattern p₃ p₁ → Subpattern p₃' p₂' → p₃.inter p₃' = none
   -- pat_app_r_arity : Pat p r → Pat p' r' → Subpattern (.app p₁ p₂) p →
   --   Subpattern (.app p₁' p₂') p' → Arity (.const c) n p₂ → Arity (.const c) n' p₂' → n = n'
-  /-- Every defeq rule of the environment, instantiated at well-formed levels, is an instance of
-  some pattern `p` (with its side conditions holding) whose right-hand side is the rule's rhs.
-  Stated on `VExpr`; the `SExpr` form is derived as `SExpr.Params.extra_pat`. -/
+  /-- Every defeq rule of the environment, instantiated at well-formed levels, is the λ-closure
+  over a telescope `Δ` of a well-typed open equation `L ≡ R : T` (with `Δ.reverse` a well-typed
+  context), whose left side `L` is an instance of some pattern `p` (with its side conditions
+  holding in `Δ.reverse ++ Γ`) and whose right side `R` is the pattern's right-hand side
+  (docs/const-case/PLAN.md D5). This is Lean4Lean's `vdefeq` convention (Theory/Meta.lean): a
+  recursor rule is stored as `λ Δ. lhs ≡ λ Δ. rhs : Π Δ. T`, and only its open body is a pattern
+  instance. The typed open equation is what types the beta steps through the binders without a
+  λ-inversion (`IsDefEq.beta` needs the body at the codomain). With `Δ = []` this is the former
+  field (an instance at the rule's own lhs) plus `env.IsDefEq univs [] L R T`, which is the
+  `extra` rule itself, so delta rules are unaffected. Stated on `VExpr`; the `SExpr` form is
+  derived as `SExpr.Params.extra_pat`. -/
   extra_patV {df : VDefEq} {ls : List VLevel} {Γ : List VExpr} :
     env.defeqs df → (∀ l ∈ ls, l.WF univs) → ls.length = df.uvars →
-    ∃ p r m1 m2, Pat p r ∧ p.Matches (df.lhs.instL ls) m1 m2 ∧
-      r.2.OK (env.IsDefEqU univs Γ) m1 m2 ∧ df.rhs.instL ls = r.1.apply m1 m2
+    ∃ (Δ : List VExpr) (L R T : VExpr),
+      df.lhs.instL ls = Δ.foldr .lam L ∧ df.rhs.instL ls = Δ.foldr .lam R ∧
+      df.type.instL ls = Δ.foldr .forallE T ∧
+      OnCtx Δ.reverse (env.IsType univs) ∧
+      env.IsDefEq univs Δ.reverse L R T ∧
+      ∃ p r m1 m2, Pat p r ∧ p.Matches L m1 m2 ∧
+        r.2.OK (env.IsDefEqU univs (Δ.reverse ++ Γ)) m1 m2 ∧ R = r.1.apply m1 m2
   /-- The type of a constructor (`classify c = ctor/etaCtor`) *is* syntactically a Π-telescope
   `Ts` over an application of the inductive type `I` (at the constant's own universe parameters)
   to `args`, with `Ts.length` the classified arity and `I` classified as an inductive type with
@@ -1522,24 +1535,6 @@ theorem _root_.Lean4Lean.Pattern.Check.OK.mkS {p : Pattern} {Γ : List VExpr} {m
         · cases h'; exact IsDefEq.mkS h hΓ
         · exact h2 _ _ _ h'⟩
 
-/-- The `SExpr` form of `Params.extra_patV`: every instantiated defeq rule is a pattern
-instance whose side conditions hold in any `SExpr` context. -/
-theorem Params.extra_pat (Γ) : env.defeqs df → ls.length = df.uvars →
-    ∃ p r m1 m2 dfs, Pat p r ∧ p.MatchesS (.mkInst ls df.lhs) m1 m2 ∧
-      (dfs : List _).map (·.2) = r.2.defeqsS m1 m2 ∧
-      (∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) ∧
-      .mkInst ls df.rhs = r.1.applyS m1 m2 := by
-  intro h1 h2
-  obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
-  obtain ⟨Γ', hΓ', rfl⟩ := SExpr.exists_map_mk Γ
-  obtain ⟨p, r, m1, m2, hp, hm, hok, hr⟩ :=
-    Params.extra_patV (Γ := Γ') h1 hvs (by simpa using h2)
-  have hm1 := hm.levelWF (VExpr.LevelWF.instL hvs)
-  obtain ⟨dfs, hdfs, hdefeq⟩ := hok.mkS hΓ' hm1
-  refine ⟨p, r, _, _, dfs, hp, ?_, hdfs, hdefeq, ?_⟩
-  · rw [mkInst_map_mk hvs]; exact hm.mkS
-  · rw [mkInst_map_mk hvs, hr]; exact Pattern.RHS.mkS_apply hm1 _
-
 def CtorBundle.IsCtor (c : Name) : Prop :=
   ∃ cl, Params.classify c = some cl ∧ cl matches .ctor .. | .etaCtor ..
 
@@ -1808,6 +1803,75 @@ def Ctx.WF : List SExpr → Prop
 scoped notation:65 "⊢ " Γ:36 => Ctx.WF Γ
 
 theorem Ctx.WF.cons (hΓ : ⊢ Γ) (hA : Γ ⊢ A : .sort u) : ⊢ A :: Γ := ⟨hΓ, _, hA⟩
+
+/-! ### The `SExpr` form of `Params.extra_patV` (PLAN D5, R6) -/
+
+theorem mk_foldr_lam (L : VExpr) : ∀ Δ : List VExpr, mk (Δ.foldr .lam L) = (Δ.map mk).foldr .lam (mk L)
+  | [] => rfl
+  | A :: Δ => by simp only [List.foldr_cons, List.map_cons, mk, mk_foldr_lam L Δ]
+
+theorem mk_foldr_forallE (T : VExpr) :
+    ∀ Δ : List VExpr, mk (Δ.foldr .forallE T) = (Δ.map mk).foldr .forallE (mk T)
+  | [] => rfl
+  | A :: Δ => by simp only [List.foldr_cons, List.map_cons, mk, mk_foldr_forallE T Δ]
+
+/-- A well-typed `VExpr` telescope, appended to a level-well-formed context, is level-well-formed. -/
+theorem onCtx_append_levelWF : ∀ {Θ : List VExpr} {Γ : List VExpr},
+    OnCtx Θ (Params.env.IsType Params.univs) → OnCtx Γ (fun _ A => A.LevelWF Params.univs) →
+    OnCtx (Θ ++ Γ) (fun _ A => A.LevelWF Params.univs)
+  | [], _, _, hΓ => hΓ
+  | _ :: _, Γ, ⟨hΘ, _, hA⟩, hΓ =>
+    have ih := onCtx_append_levelWF hΘ hΓ
+    ⟨ih, ((hA.weakR Params.henv (VEnv.CtxWF.closed Params.henv hΘ) Γ).levelWF ih).1⟩
+
+/-- The `SExpr` image of a well-typed `VExpr` telescope over a well-formed context is well-formed. -/
+theorem ctxWF_append_mk : ∀ {Θ : List VExpr} {Γ : List VExpr},
+    OnCtx Θ (Params.env.IsType Params.univs) → OnCtx Γ (fun _ A => A.LevelWF Params.univs) →
+    ⊢ Γ.map mk → ⊢ (Θ ++ Γ).map mk
+  | [], _, _, _, h => h
+  | _ :: _, Γ, ⟨hΘ, _, hA⟩, hΓ, h =>
+    ⟨ctxWF_append_mk hΘ hΓ h, _, by
+      simpa [mk] using IsDefEq.mkS (hA.weakR Params.henv (VEnv.CtxWF.closed Params.henv hΘ) Γ)
+        (onCtx_append_levelWF hΘ hΓ)⟩
+
+/-- The `SExpr` form of `Params.extra_patV` (PLAN D5; R6, from E5's `T.extra_pat_lam`): every
+instantiated defeq rule is the λ-closure over a telescope `Δ` of an open equation `L ≡ R : T`,
+typed in `Δ.reverse ++ Γ` for any `SExpr` context `Γ` (whose well-formedness it preserves),
+whose left side is a pattern instance with side conditions holding in `Δ.reverse ++ Γ` and whose
+right side is the pattern's right-hand side. The former statement (before R6) was the last
+conjunct alone, at `Δ = []`: `∃ p r m1 m2 dfs, Pat p r ∧ p.MatchesS (.mkInst ls df.lhs) m1 m2 ∧
+dfs.map (·.2) = r.2.defeqsS m1 m2 ∧ (∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) ∧
+.mkInst ls df.rhs = r.1.applyS m1 m2`. -/
+theorem Params.extra_pat (Γ : List SExpr) {df : VDefEq} {ls : List SLevel}
+    (h1 : Params.env.defeqs df) (h2 : ls.length = df.uvars) :
+    ∃ (Δ : List SExpr) (L R T : SExpr),
+      .mkInst ls df.lhs = Δ.foldr .lam L ∧ .mkInst ls df.rhs = Δ.foldr .lam R ∧
+      .mkInst ls df.type = Δ.foldr .forallE T ∧
+      (⊢ Γ → ⊢ Δ.reverse ++ Γ) ∧
+      Δ.reverse ++ Γ ⊢ L ≡ R : T ∧
+      ∃ p r m1 m2 dfs, Params.Pat p r ∧ p.MatchesS L m1 m2 ∧
+        (dfs : List _).map (·.2) = r.2.defeqsS m1 m2 ∧
+        (∀ a b A, (A, a, b) ∈ dfs → Δ.reverse ++ Γ ⊢ a ≡ b : A) ∧
+        R = r.1.applyS m1 m2 := by
+  obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
+  obtain ⟨Γ', hΓ', rfl⟩ := SExpr.exists_map_mk Γ
+  obtain ⟨Δ, L, R, T, hl, hr, hT, hΔ, hLR, p, r, m1, m2, hp, hm, hok, hR⟩ :=
+    Params.extra_patV (Γ := Γ') h1 hvs (by simpa using h2)
+  have hctx := onCtx_append_levelWF hΔ hΓ'
+  have hΔlv := onCtx_append_levelWF (Γ := []) hΔ ⟨⟩
+  rw [List.append_nil] at hΔlv
+  have hmap : (Δ.map mk).reverse ++ Γ'.map mk = (Δ.reverse ++ Γ').map mk := by
+    simp [List.map_reverse]
+  have hm1 := hm.levelWF (hLR.levelWF hΔlv).1
+  obtain ⟨dfs, hdfs, hdefeq⟩ := hok.mkS hctx hm1
+  refine ⟨Δ.map mk, mk L, mk R, mk T, ?_, ?_, ?_, ?_, ?_, p, r, _, _, dfs, hp, hm.mkS, hdfs, ?_, ?_⟩
+  · rw [mkInst_map_mk hvs, hl, mk_foldr_lam]
+  · rw [mkInst_map_mk hvs, hr, mk_foldr_lam]
+  · rw [mkInst_map_mk hvs, hT, mk_foldr_forallE]
+  · rw [hmap]; exact ctxWF_append_mk hΔ hΓ'
+  · rw [hmap]; exact IsDefEq.mkS (hLR.weakR Params.henv (VEnv.CtxWF.closed Params.henv hΔ) Γ') hctx
+  · rw [hmap]; exact hdefeq
+  · rw [hR]; exact Pattern.RHS.mkS_apply hm1 _
 
 variable (HasType : List SExpr → SExpr → SExpr → Prop)
 inductive Ctx.Subst (Γ : List SExpr) : SExpr.Subst → List SExpr → Prop where

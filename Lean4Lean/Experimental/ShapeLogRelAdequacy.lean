@@ -347,6 +347,147 @@ theorem LR.const_case {Γ₀ Γ : List SExpr} {k : Nat} (WFIH : LR.WFIH Params.r
     exact (LR _).bot hmem.isType
   · exact H m a hle hA hmem
 
+/-! ## The `extra` case for λ-wrapped rules (PLAN D5, R6; from E5)
+
+A rule is the λ-closure over a telescope `Δ` of an open typed equation (`Params.extra_pat`).
+`LR.lamRule` goes through one `LamDefEq` layer per binder, each a typed beta step from the open
+equation (`typed_beta_rhs` on `lamDF_foldr`, substituted), then `WHRed.extra` on the open
+instance. -/
+
+/-- The typed reduction of a one-binder λ-rule instance, from the rule's open typed equation:
+no λ-inversion and no `⊢ Γ` needed (docs/const-case/plan/historical/LamRuleTyped.lean). -/
+theorem typed_beta_rule {Γ : List SExpr} {A L R T a : SExpr} {u}
+    (hA : Γ ⊢ A : .sort u) (hLR : A::Γ ⊢ L ≡ R : T) (ha : Γ ⊢ a : A) :
+    Γ ⊢ .app (.lam A L) a ≡ R.inst a : T.inst a :=
+  .trans (.appDF (.lamDF hA hLR) ha) (.beta hLR.hasType.2 ha)
+
+/-- The `N`-side step `(λA.R) a ≡ R[a]` from the same data. -/
+theorem typed_beta_rhs {Γ : List SExpr} {A L R T a : SExpr}
+    (hLR : A::Γ ⊢ L ≡ R : T) (ha : Γ ⊢ a : A) :
+    Γ ⊢ .app (.lam A R) a ≡ R.inst a : T.inst a := .beta hLR.hasType.2 ha
+
+/-- Well-formedness of a context gives that of each suffix. -/
+theorem ctxWF_of_append : ∀ (Δ : List SExpr) {Γ : List SExpr}, ⊢ Δ ++ Γ → ⊢ Γ
+  | [], _, h => h
+  | _ :: Δ, _, h => ctxWF_of_append Δ h.1
+
+/-- The λ-closure of an open typed equation over a well-formed telescope (`lamDF` per binder). -/
+theorem lamDF_foldr {T : SExpr} : ∀ (Δ : List SExpr) {Ξ : List SExpr} {L R : SExpr},
+    ⊢ Δ.reverse ++ Ξ → Δ.reverse ++ Ξ ⊢ L ≡ R : T →
+    Ξ ⊢ Δ.foldr .lam L ≡ Δ.foldr .lam R : Δ.foldr .forallE T
+  | [], _, _, _, _, h => h
+  | A :: Δ, Ξ, L, R, hwf, h => by
+    have hctx : (A :: Δ).reverse ++ Ξ = Δ.reverse ++ A :: Ξ := by simp
+    rw [hctx] at hwf h
+    have ⟨_, _, hA⟩ := ctxWF_of_append Δ.reverse hwf
+    exact .lamDF hA (lamDF_foldr Δ hwf h)
+
+/-- At element shapes, type validity of a `lam` with itself transfers to any right side
+(every non-trivial row reduces the `lam` to a sort, a Π or a constant). -/
+theorem tyDefEq_lam_l {IH : LogRel Γ n} {X F N : SExpr} {m : WShape (n+1)}
+    (h : LRS.TyDefEq IH (.lam X F) (.lam X F) m) : LRS.TyDefEq IH (.lam X F) N m := by
+  cases m using WShape.casesOn' with
+  | bot => exact LRS.TyDefEq.bot
+  | lam f hf => exact (LRS.TyDefEq.lam_m (f := f) (hf := hf)).2 trivial
+  | ctor c l hc => exact (LRS.TyDefEq.ctor_m (c := c) (l := l) (h := hc)).2 trivial
+  | sort r => obtain ⟨_, h, _⟩ := h; cases WHNF.lam.whRedS h.2
+  | forallE b f => obtain ⟨_, _, _, _, _, _, h, _⟩ := h; cases WHNF.lam.whRedS h.2
+  | indTy => obtain ⟨_, _, _, h, _⟩ := h; cases WHNF.lam.whRedS h.2
+
+/-- Level 0: a `lam` related to itself is related to anything (only `⊥`/`sort` rows exist). -/
+theorem lr0_lam_of {X F N Ty : SExpr} {m a : WShape 0}
+    (h : LR0.DefEq Γ (.lam X F) (.lam X F) Ty m a) : LR0.DefEq Γ (.lam X F) N Ty m a := by
+  obtain ⟨a, ha⟩ := a; obtain ⟨m, hm⟩ := m
+  cases a <;> cases m <;> simp only [LR0.DefEq, LR0.TyDefEq] at h ⊢
+  obtain ⟨_, _, h, _⟩ := h; cases WHNF.lam.whRedS h.2
+
+/-- Level `n+1`, ambient a Π in whnf: the `(lam, forallE)` row is `LamDefEq`, whose
+cross component is supplied by `key`; every other row is trivial or refuted by `hl`. -/
+theorem lrs_lam_of {IH : LogRel Γ n} {X F G B : SExpr} {m a : WShape (n+1)}
+    (key : ∀ {x} {p : WShape n} {mf a₂ : WShapeFun n}, Γ ⊢ x : X →
+      IH.DefEq ((SExpr.lam X F).app x) ((SExpr.lam X F).app x) (B.inst x) (mf.app p) (a₂.app p) →
+      IH.DefEq ((SExpr.lam X G).app x) ((SExpr.lam X G).app x) (B.inst x) (mf.app p) (a₂.app p) →
+      IH.DefEq ((SExpr.lam X F).app x) ((SExpr.lam X G).app x) (B.inst x) (mf.app p) (a₂.app p))
+    (hl : LRS.DefEq IH (.lam X F) (.lam X F) (.forallE X B) m a)
+    (hr : LRS.DefEq IH (.lam X G) (.lam X G) (.forallE X B) m a) :
+    LRS.DefEq IH (.lam X F) (.lam X G) (.forallE X B) m a := by
+  cases a using WShape.casesOn' with
+  | bot => trivial
+  | sort r =>
+    by_cases hm : m = .bot
+    · subst hm; trivial
+    rw [LRS.DefEq.sort_a hm] at hl ⊢
+    exact ⟨hl.1, tyDefEq_lam_l hl.2⟩
+  | forallE a₁ a₂ =>
+    cases m using WShape.casesOn' with
+    | bot => trivial
+    | lam f hf =>
+      rw [LRS.DefEq.lam_forallE] at hl hr ⊢
+      obtain ⟨A₁, A₂, u, v, rA, hA1, hA2, hA₂, hE, hP⟩ := hl
+      obtain ⟨_, _, _, _, rA', _, _, _, _, hP'⟩ := hr
+      cases WHNF.forallE.whRedS rA.2
+      cases WHNF.forallE.whRedS rA'.2
+      exact ⟨_, _, u, v, rA, hA1, hA2, hA₂, hE,
+        fun _ _ _ hp hab hv => ⟨(hP.1 hp hab hv).1, (hP'.1 hp hab hv).2⟩,
+        fun _ _ hp hx hv => key hx (hP.2 hp hx hv) (hP'.2 hp hx hv)⟩
+    | sort | forallE | ctor | indTy => exact (hl : False).elim
+  | indTy =>
+    cases m using WShape.casesOn' with
+    | bot => trivial
+    | ctor c l hc =>
+      rw [LRS.DefEq.ctor_indTy] at hl
+      obtain ⟨_, _, _, _, _, _, _, _, _, _, hTy, _⟩ := hl
+      cases WHNF.forallE.whRedS hTy.2
+    | sort | forallE | lam | indTy => exact (hl : False).elim
+  | lam | ctor => exact (hl : False).elim
+
+/-- The `extra` case for a λ-rule, generalized over the binders already instantiated (`τ`, a
+substitution from `Ξ` into `Γ₀`) and over the level: given the open equation `L ≡ R : T` and the
+open step `L ⤳ R` in `Δ.reverse ++ Ξ`, the instantiated closures `(λΔ.L)[τ]`, `(λΔ.R)[τ]` are
+related as soon as each is related to itself. One `LamDefEq` layer per binder, each typed beta
+step from the open equation (`typed_beta_rhs` on `lamDF_foldr`, substituted); at `Δ = []`,
+`WHRed.extra` on the open instance (substituted), typed by the substituted open equation. -/
+theorem LR.lamRule {Γ₀ : List SExpr} (hΓ₀ : ⊢ Γ₀) {T : SExpr} :
+    ∀ (Δ : List SExpr) {Ξ : List SExpr} {τ : Subst} {L R : SExpr},
+    ⊢ Δ.reverse ++ Ξ → Δ.reverse ++ Ξ ⊢ L ≡ R : T → Δ.reverse ++ Ξ ⊢ L ⤳ R →
+    Ctx.SubstEq Γ₀ τ τ Ξ → ∀ {n} {m a : WShape n},
+    (LR Γ₀).DefEq ((Δ.foldr .lam L).subst τ) ((Δ.foldr .lam L).subst τ)
+      ((Δ.foldr .forallE T).subst τ) m a →
+    (LR Γ₀).DefEq ((Δ.foldr .lam R).subst τ) ((Δ.foldr .lam R).subst τ)
+      ((Δ.foldr .forallE T).subst τ) m a →
+    (LR Γ₀).DefEq ((Δ.foldr .lam L).subst τ) ((Δ.foldr .lam R).subst τ)
+      ((Δ.foldr .forallE T).subst τ) m a
+  | [], Ξ, τ, L, R, _, hLR, hred, W, n, m, a, hl, _ => by
+    have tE : Γ₀ ⊢ L.subst τ ≡ R.subst τ : T.subst τ := IsDefEq.subst hΓ₀ W hLR
+    have rE : Γ₀ ⊢ L.subst τ ⤳ R.subst τ := WHRed.subst (fun h => IsDefEq.subst hΓ₀ W h) hred
+    exact ((LR Γ₀).whr ⟨tE.hasType.1, .rfl⟩ ⟨tE, .tail .rfl rE⟩).1 hl
+  | A :: Δ, Ξ, τ, L, R, hwf, hLR, hred, W, n, m, a, hl, hr => by
+    have hctx : (A :: Δ).reverse ++ Ξ = Δ.reverse ++ A :: Ξ := by simp
+    rw [hctx] at hwf hLR hred
+    have ⟨_, _, hA⟩ := ctxWF_of_append Δ.reverse hwf
+    have hAτ := IsDefEq.subst hΓ₀ W hA
+    have hFG := IsDefEq.subst (Ctx.WF.cons hΓ₀ hAτ) (W.lift hA) (lamDF_foldr Δ hwf hLR)
+    -- the typed beta step of one layer, from the (substituted) λ-closure of the open equation
+    have step {Y x : SExpr}
+        (hY : A.subst τ :: Γ₀ ⊢ Y.subst τ.lift : (Δ.foldr .forallE T).subst τ.lift)
+        (hx : Γ₀ ⊢ x : A.subst τ) :
+        TWHRedS Γ₀ (.app (.lam (A.subst τ) (Y.subst τ.lift)) x) (Y.subst (τ.cons x))
+          (((Δ.foldr .forallE T).subst τ.lift).inst x) := by
+      have h := typed_beta_rhs hY hx
+      rw [inst_lift_cons (e := Y)] at h
+      exact ⟨h, inst_lift_cons (x := x) ▸ .tail .rfl .beta⟩
+    cases n with
+    | zero => exact lr0_lam_of hl
+    | succ n =>
+      refine lrs_lam_of (fun {x _ _ _} hx dl dr => ?_) hl hr
+      have W' : Ctx.SubstEq Γ₀ (τ.cons x) (τ.cons x) (A :: Ξ) := .cons W hA hx
+      have tl := step hFG.hasType.1 hx; have tr := step hFG.hasType.2 hx
+      refine ((LR Γ₀).whr tl tr).2 ?_
+      rw [inst_lift_cons]
+      refine lamRule hΓ₀ Δ hwf hLR hred W' ?_ ?_
+      · have := ((LR Γ₀).whr tl tl).1 dl; rwa [inst_lift_cons] at this
+      · have := ((LR Γ₀).whr tr tr).1 dr; rwa [inst_lift_cons] at this
+
 /-! ## Adequacy, by well-founded induction on the rank bound (PLAN D4)
 
 `LR.adequacy_rank` is adequacy for derivations in the prefix `env.below rank k`, assuming it at
@@ -715,16 +856,27 @@ theorem LR.adequacy_rank {k : Nat} (WFIH : LR.WFIH Params.rank Γ₀ k)
     cases (WShape.lift_eq_bot le_n).1 (hS.proofIrrel ha')
     exact .bot hmem.isType
   | extra h1 h2 Hl Hr ihl ihr =>
+    -- R6 (E5): the soundness transport is the λ-rule `extra` case of `strongSoundS`
+    have hS := strongSoundS_extra_lam (hE.2 h1) h2 (LE_Interp.strongSoundS (Hl.mono hE))
+      (LE_Interp.strongSoundS (Hr.mono hE))
     refine ⟨fun σ σ' W => ⟨?_, ?_⟩, fun σ W => ?_⟩
     · exact ((ihl hM hA hmem).1 W).1
-    · exact ((ihr ((LE_Interp.soundSE hE (.extra h1 h2 Hl Hr) W.fits).1.1 hM) hA hmem).1 W).2
+    · exact ((ihr ((hS.sound W.fits).1 hM) hA hmem).1 W).2
     · have ⟨⟨hA1, _⟩, hA2, hA3⟩ := Params.henv.closed.2 (hE.2 h1)
-      have := (ihl hM hA hmem).2 W; revert this
+      have Dl := (ihl hM hA hmem).2 W
+      have Dr := (ihr ((hS.sound W.fits).1 hM) hA hmem).2 W
+      rw [hA1.mkInstS.subst_eq .zero, hA3.mkInstS.subst_eq .zero] at Dl
+      rw [hA2.mkInstS.subst_eq .zero, hA3.mkInstS.subst_eq .zero] at Dr
       rw [hA1.mkInstS.subst_eq .zero, hA2.mkInstS.subst_eq .zero, hA3.mkInstS.subst_eq .zero]
-      let ⟨_, _, _, _, _, a1, a2, a3, a4, a5⟩ := Params.extra_pat Γ₀ (hE.2 h1) h2
-      -- D6: `Δ = []` (today's `extra_patV`): the step is typed by the `extra` rule itself
-      have tE : Γ₀ ⊢ _ ≡ _ : _ := IsDefEq.extra (hE.2 h1) h2
-      exact ((LR _).whr ⟨tE.hasType.1, .rfl⟩ ⟨tE, .tail .rfl (a5 ▸ .extra a1 a2 a3 a4)⟩).1
+      -- D5: the rule is a λ-closure over `Δ` of an open typed equation `L ≡ R : Ty`
+      obtain ⟨Δ, L, R, Ty, hl, hr, hTy, hwf, hLR, p, r, m1, m2, dfs, a1, a2, a3, a4, a5⟩ :=
+        Params.extra_pat Γ₀ (hE.2 h1) h2
+      -- `WHRed.extra` on the open instance
+      have hred : Δ.reverse ++ Γ₀ ⊢ L ⤳ R := a5 ▸ .extra a1 a2 a3 a4
+      rw [hl, hTy] at Dl; rw [hr, hTy] at Dr; rw [hl, hr, hTy]
+      -- through `LamDefEq`, one typed beta layer per binder, then the open step (`LR.lamRule`)
+      simpa only [subst_id] using LR.lamRule W.wf₀ Δ (hwf W.wf₀) hLR hred .nil
+        (by simpa only [subst_id] using Dl) (by simpa only [subst_id] using Dr)
 
 /-- `LR.adequacy_rank` at every bound, by strong induction on `k` (D4 measure level (1)). -/
 theorem LR.adequacy_rank_wf :

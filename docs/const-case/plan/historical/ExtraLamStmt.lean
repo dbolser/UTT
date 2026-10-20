@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before extra_patV was restated on λ-telescopes (docs/const-case/PLAN.md D5, landed by R6); no longer compiles.
 /-! Plan amender, round 3: the E5 interface. snap6's `Params` still has the old `extra_patV`
 (SExpr.lean:59-62), so D5's λ-`extra_patV` is an explicit hypothesis `ExtraPatVLam`, and the
 `extra` case of `LE_Interp.strongSoundS` (ShapeLogRel.lean:5229-5260) is a standalone lemma over a

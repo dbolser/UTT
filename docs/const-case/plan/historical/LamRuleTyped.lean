@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before extra_patV was restated on λ-telescopes (docs/const-case/PLAN.md D5, landed by R6); no longer compiles.
 /-! Audit (circularity/measure), finding F1: the `extra` case for λ-wrapped rules under D6's
 TYPED `whr` needs the typed beta step `(λA.R) a ≡ R[a] : T[a]` at the rule's declared codomain
 `T`.  Against HEAD 3c35f59 (/tmp/utt-snap6).  No sorries. -/
