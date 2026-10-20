@@ -184,6 +184,14 @@ green too. The tracer is not yet a pass/fail CI check (a good first task, §8).
   recovered through `exists_below` and `Nat.strongRecOn` (plan items R7+R8;
   `3a28c52`). The one sorry on the route moved from `LR.adequacy` to
   `LR.const_spine`; the axiom set is unchanged.
+- `extra_patV` restated on λ-telescopes with the rule's open typed equation
+  (plan D5, experiment E5): `Params.extra_pat` is its `SExpr` translation, and
+  the `extra` cases of `LE_Interp.strongSoundS` and `LR.adequacy_rank` are
+  re-proved for λ-rules (`strongSoundS_extra_lam`, `LR.lamRule`) without
+  `IsDefEq.extra`. The ℕ instance `natParams` moves to the environment with
+  its two λ-wrapped rules, every field proved but `ctor_sort_nat`;
+  `docs/params/check.sh` asserts the sorry counts (items R6+R12). The tracer
+  output is identical.
 - Typed reductions in the logical relation (`TyRedS`, `TWHRedS`, `AmbSort`;
   the `sort_iff`, `sort_iff_ty`, `whr`, `whr_ty` fields take typed reductions,
   `(⊥, ·)` stays `True`; the other fifteen fields and every statement in
@@ -201,8 +209,10 @@ instances live in `docs/params/` (experiments, not part of the build; see its
 - `Pat`, `classify`, `pat_simple`, `pat_wf`, `pat_uniq`: every rewrite rule is
   a simple pattern (delta or iota), heads are classified (`symb`, `ctor`,
   `etaCtor`, `indTy`), and overlapping patterns coincide.
-- `extra_patV`: every instantiated environment rule is an instance of such a
-  pattern, with its side conditions holding.
+- `extra_patV`: every instantiated environment rule is the λ-closure, over
+  its binder telescope, of a well-typed open equation whose left-hand side is
+  an instance of such a pattern, with its side conditions holding (plan D5,
+  landed by R6).
 - `ctor_syn`, `ctor_sort`: constructor types are syntactically a Π-telescope
   over the inductive type, at a sort that is never `Prop`.
 - `rank`, `rank_ordered`, `type_below`, `pat_rank`, `pat_gen`, `pat_typed`,
@@ -216,21 +226,19 @@ instances live in `docs/params/` (experiments, not part of the build; see its
   inductive constant (plan D3; `ℕ`, `Bool`, monomorphic lists and trees; not
   `List α` or `Prod`).
 
-`extra_patV` as stated does not fit schematic rules. For the `ℕ` environment
-with its two iota rules lambda-wrapped (Lean4Lean's own `vdefeq` convention) it
+`extra_patV` was first stated for rules whose left-hand side is a bare pattern
+instance, which does not fit schematic rules: for the `ℕ` environment with its
+two iota rules lambda-wrapped (Lean4Lean's own `vdefeq` convention) that form
 is false for every choice of `Pat`, because `Pattern.Matches` has no `lam` case
-(`docs/params/NatParams.lean`: `extra_patV_false_envA`); that this environment
-is `Ordered` rests on two routine typing sorries there. The open-`bvar`
-encoding is pattern-matchable but not `VDefEq.WF` (`iotaZeroOpen_not_wf`). So
-far the field holds only for rule-free environments
-(`docs/params/EmptyParams.lean`; `natParams` over the constants-only `ℕ`
-environment). The plan's restatement, on λ-telescopes with the rule's open
-typed equation, is D5 of `docs/const-case/PLAN.md`; `docs/params/README.md`
-has the details. Experiment E4 (`docs/const-case/plan/E4/`, 2026-10-20) has
-the full post-plan field list as a structure and proves every field but
-`ctor_sort` for the `ℕ` environment with its two λ-wrapped rules, closing the
-two routine typing sorries on the way; it lands as R5 (the class) and R12 (the
-instance).
+(`docs/params/NatParams.lean`: `extra_patV_false_envA`, kept against the old
+form), and the open-`bvar` encoding is pattern-matchable but not `VDefEq.WF`
+(`iotaZeroOpen_not_wf`). The field is now stated on λ-telescopes with the
+rule's open typed equation (D5 of `docs/const-case/PLAN.md`, experiment E5,
+landed by R6), and `natParams` lives over the environment that contains the
+two λ-wrapped rules, with every field proved except `ctor_sort` (experiment
+E4, landed by R12; `docs/params/README.md` has the details). The remaining
+sorry there, `ctor_sort_nat`, is blocked on the repo's own sorried
+`IsDefEqU.sort_inv`.
 
 Building a `Params` instance for the environments Lean4Lean actually produces
 depends on the inductive-type specification in `Theory/Inductive.lean`, which
@@ -369,8 +377,9 @@ R7 and R8 (`3a28c52`: the rank induction and the measure; the one sorry is now
 the spine lemma). E6a (the pattern-leaf field lowering) found the plan's
 pinned lowering statement false and proved a corrected one; its one upstream
 change, the hypothesis `hR` on the spine lemma and the pattern leaf, is in.
-Next: E6 (the pattern leaf proper), then R9 (the spine lemma), R10, R11, and
-the off-path R6 and R12.
+R6 and R12 (the λ-rule field and the ℕ instance over the environment with
+rules) landed the same evening. Next: E6 (the pattern leaf proper), then R10
+(landing it), R9 (the spine lemma) and R11.
 
 **Known risks** (`PLAN.md` §4 and its audit log). The shape-level iota match
 binds a field variable to the raw field shape, and a constructor shape counts

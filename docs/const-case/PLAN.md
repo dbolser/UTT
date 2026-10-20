@@ -103,6 +103,16 @@
 > occurrence pinned and `us.length = ci'.uvars` unconditional. D4's [A] holds (`app_collapse`); option
 > (b) is not needed. D4 steps 1-2 and §4 Q6 read with these changes; E6/R10 build on the corrected
 > lemma.
+>
+> **R6+R12 landed (2026-10-20, verified independently).** `extra_patV` is D5's λ-field (text as E4's
+> `ParamsR`); `Params.extra_pat` is E5's `extra_pat_lam` (now at SExpr.lean ~1845, after `Ctx.WF`,
+> since its statement needs `⊢ Γ`); `strongSoundS_extra_lam`, `soundEq_pat`, `SoundEq.lam(_foldr)` sit
+> before `LE_Interp.strongSoundS`, whose `extra` case is one line; `typed_beta_rule/rhs`, `lamDF_foldr`,
+> `lr0_lam_of`, `lrs_lam_of`, `LR.lamRule` sit before `LR.adequacy_rank`, whose `extra` case is E5's
+> with `hE`. `IsDefEq.extra` is used by neither case. `natParams` is E4's instance over the class
+> (one sorry, `ctor_sort_nat`); `docs/params/check.sh` asserts the counts and the tracer at `natParams`;
+> `Schema.lean`, `plan/ExtraLamStmt.lean`, `plan/LamRuleTyped.lean` went historical. Tracer unchanged
+> (`const_spine`). Open Lean items: R10 (from E6), R9, R11.
 
 
 Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.
