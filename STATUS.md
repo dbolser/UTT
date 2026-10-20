@@ -279,7 +279,10 @@ the ordered work items are in `PLAN.md`).
    also carry the rule's open typed equation `Δ ⊢ L ≡ R : T`: each typed beta
    step needs the body typed at the declared codomain, and the only other
    source is Pi-injectivity, a consequence of adequacy. The ℕ instance moves
-   to the environment that contains its rules (`envA`).
+   to the environment that contains its rules (`envA`). Experiment E5 (two
+   verified attempts, 2026-10-20; `docs/const-case/plan/E5/`) proves both
+   `extra` cases for λ-rules from the restated field exactly as written, with
+   no amendment; the landing is plan item R6.
 
 Stage 1a is a restriction: its `Params` fields (`indTy_closed`,
 `ctor_fields_closed`) rule out every parametric or indexed inductive with

@@ -34,6 +34,14 @@
 > at 2027); `ShapeLogRel.lean` 6478; `ShapeLogRelAdequacy.lean` 562. `Measure.lean` and eight
 > `plan/` evidence files are historical (`plan/historical/`); the plan's remaining R4 references to
 > `WeakE.lean`, `MkSE.lean`, `ForallInvE.lean` are to those pinned copies.
+>
+> **E5 passed (2026-10-20).** Two verified attempts on `3bccfa8`; report and modules in `plan/E5/`.
+> D5's λ-`extra_patV` suffices as stated (every conjunct used; no amendment). `T.strongSoundS_extra_lam`
+> has `ExtraLamStmt.lean`'s statement; `T.LR.adequacy` with `hlam` keeps the repo's tracer block.
+> Findings for R6: `typed_beta_rule` is not needed (`typed_beta_rhs` on both halves is); the beta
+> layers are typed from the λ-closure of the open equation plus `IsDefEq.subst`, not layer by layer;
+> `IsDefEq.extra` is not used; and R6 must also swap `strongSoundS`'s `extra` case for
+> `strongSoundS_extra_lam`, since that case is the one remaining path from adequacy to `Params.extra_pat`.
 
 
 Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.

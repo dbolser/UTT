@@ -78,6 +78,17 @@ Audit round 3:
 | `ExtraLamStmt.lean` | The statement of the `extra` case of `strongSoundS` for λ-wrapped rules, with the λ-form `extra_patV` as an explicit hypothesis (experiment E5); one marked sorry. |
 | `RhsLowerStmt.lean` | `Valuation.lower` and the statement of the lowering lemma `rhs_lower` for the pattern leaf (experiment E6a); three marked sorries, two inherited from `PatLeafStmt2.lean`. |
 
+## E5/ (λ-wrapped rules, PASSED 2026-10-20)
+
+`E5/E5-REPORT.md` is the report. `E5/LamRules.lean` has D5's λ-`extra_patV` as the hypothesis
+`ExtraPatVLam` (verbatim `ExtraLamStmt.lean`), its `SExpr` translation `T.extra_pat_lam` and
+`T.strongSoundS_extra_lam` (the `extra` case of `strongSoundS` for a λ-rule, statement as
+`ExtraLamStmt.lean:25`), all sorry-free; `E5/LamAdequacy.lean` is `ShapeLogRelAdequacy.lean:9-562`
+with `hlam` threaded and the `extra` case re-proved for λ-rules (only the `const`-case sorry).
+`E5/LamRules-b.lean` is the second attempt's variant (per-binder context conjunct). `E5/Check.lean`
+and `E5/Reach.lean` are the axiom, tracer and reachability checks. Module files, excluded from
+`../check.sh`; the report's §5 says how to rebuild. D5 needs no amendment; R6 lands it.
+
 ## E2/ (the stage-1a constructor clause, PASSED 2026-10-19)
 
 `E2/E2-REPORT.md` is the report. `E2/CtorLR.lean` is the typed `LogRel` block
