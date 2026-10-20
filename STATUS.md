@@ -159,6 +159,18 @@ green too. The tracer is not yet a pass/fail CI check (a good first task, §8).
   forms of `defeq` and `LE_Interp.soundS`. `IsDefEq.strong`, `strongS`,
   `envStrongS`, `mkS` and every statement in `ShapeLogRelAdequacy.lean` keep
   their types (plan D4, item R4; `9dcefbc`). The tracer output is identical.
+- `Pattern.gen`, the computed pattern context of a rewrite rule (`PatGen`,
+  `VExpr.piTelescope`, the per-occurrence self variables), with its seven
+  specification lemmas, and the ten `Params` fields of the rank measure and
+  the stage-1a restriction (`rank`, `rank_ordered`, `type_below`, `pat_rank`,
+  `pat_gen`, `pat_typed`, `pat_defeq`, `pat_check`, `indTy_closed`,
+  `ctor_fields_closed`), text for text as experiments E3 and E4 pinned them.
+  The definitions sit before `class Params` in `SExpr.lean`; the `SExpr`-level
+  lemmas are the new module `Experimental/PatternGen.lean` (plan item R5).
+  The tracer output is identical. Until R6 and R12, `emptyParams` is the only
+  sorry-free instance of the class: `natParams` (over the rule-free `envC`)
+  carries `pat_defeq` as a marked sorry, since that field is false without
+  the rules (`docs/params/README.md`).
 - Typed reductions in the logical relation (`TyRedS`, `TWHRedS`, `AmbSort`;
   the `sort_iff`, `sort_iff_ty`, `whr`, `whr_ty` fields take typed reductions,
   `(⊥, ·)` stays `True`; the other fifteen fields and every statement in
@@ -180,6 +192,16 @@ instances live in `docs/params/` (experiments, not part of the build; see its
   pattern, with its side conditions holding.
 - `ctor_syn`, `ctor_sort`: constructor types are syntactically a Π-telescope
   over the inductive type, at a sort that is never `Prop`.
+- `rank`, `rank_ordered`, `type_below`, `pat_rank`, `pat_gen`, `pat_typed`,
+  `pat_defeq`, `pat_check`: a rank on constants such that each rank-bounded
+  sub-environment is ordered, every constant's type lives below its rank, and
+  every rule's right-hand side is typed in its computed pattern context
+  (`Pattern.gen`) below the head's rank, and is a definitional equality of the
+  environment (plan D4, landed by R5).
+- `indTy_closed`, `ctor_fields_closed`: the stage-1a restriction, every
+  inductive type is a closed sort and every constructor field is a closed
+  inductive constant (plan D3; `ℕ`, `Bool`, monomorphic lists and trees; not
+  `List α` or `Prod`).
 
 `extra_patV` as stated does not fit schematic rules. For the `ℕ` environment
 with its two iota rules lambda-wrapped (Lean4Lean's own `vdefeq` convention) it
@@ -322,8 +344,9 @@ route (experiment E2, two verified attempts, then R3 as `2c5a205`), and the
 environment-indexed strong judgment landed as R4 (`9dcefbc`, verified
 independently; nine more `docs/` experiments went historical). E3 (the rank
 measure and `Pattern.gen`), E5 (λ-wrapped rules) and E4 (the ℕ instance of
-the new fields) passed on 2026-10-20, two verified attempts each. Next: E6a/E6
-(the pattern leaf), then the landings R5 to R11.
+the new fields) passed on 2026-10-20, two verified attempts each, and R5 (the
+fields, `Pattern.gen` and its lemmas in the repo) landed the same day. Next:
+E6a/E6 (the pattern leaf) and the landings R7, R8, R6, R12, then R9 to R11.
 
 **Known risks** (`PLAN.md` §4 and its audit log). The shape-level iota match
 binds a field variable to the raw field shape, and a constructor shape counts
