@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Typecheck the Params-instance experiments against the current tree (not part of the build).
-# NatParams.lean has three deliberate, marked `sorry`s, so only `error` counts as failure.
+# NatParams.lean has four deliberate, marked `sorry`s, so only `error` counts as failure.
 set -e
 cd "$(dirname "$0")/../.."
 for f in EmptyParams NatParams Schema; do

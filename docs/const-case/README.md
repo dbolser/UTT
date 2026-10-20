@@ -87,7 +87,10 @@ which is now false by design. `Measure.lean` and eight more files in `plan/`
 `PatLeafStmt2`, `RhsLowerStmt`, now in `plan/historical/`) followed when
 `IsDefEqStrong` got its environment index (R4): they define their own
 `VEnv.below`, `IsDefEqStrongE`, `mkSE` or `telescope`, which now live in
-`SExpr.lean`. Each carries a `-- historical:` line after its import. Their claims concern the earlier relation and are kept for the record;
+`SExpr.lean`. `Fuel.lean` and `plan/SelfType.lean` (now in `plan/historical/`)
+followed when `Pattern.gen` and the rank fields landed (R5): they define their own
+`Pattern.RHS.fixedLeaves` and `mkInst_instL`, which now live in `SExpr.lean` and
+`Experimental/PatternGen.lean`. Each carries a `-- historical:` line after its import. Their claims concern the earlier relation and are kept for the record;
 `check.sh` skips them.
 
 References to `/tmp/utt-snap*`, `/tmp/utt-exp/...` and

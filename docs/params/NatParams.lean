@@ -284,6 +284,284 @@ theorem ctor_sort_nat {c : Name} {cl : Classification} {ci : VConstant} {U : Nat
   sorry -- SORRY (blocked): needs `IsDefEq.uniq` + `IsDefEqU.sort_inv` (Injectivity.lean, itself
         -- `sorry`) to get `u ≈ succ zero` from `HasType [] Nat (sort u)`; then `eval ≠ 0` is `rfl`.
 
+/-! ## The rank fields (PLAN D4/D3; proofs from E4, `docs/const-case/plan/E4/NatParamsA.lean`)
+
+E4 proves these over `envA`; here they are over `envC`, which has the same constants and no
+rules. `pat_defeq` is the exception: it is false over `envC` (marked sorry below). -/
+
+/-! ### `Nat.rec`'s binder typings, as named layers (E4's) -/
+
+/-- `[motive] ⊢ motive : Nat → Sort u` etc.: the contexts of the rules' telescopes. -/
+abbrev Γm : List VExpr := [motiveTy]
+abbrev Γz : List VExpr := [zTy, motiveTy]
+abbrev Γs : List VExpr := [sTy, zTy, motiveTy]
+abbrev Γn : List VExpr := [natTy, sTy, zTy, motiveTy]
+
+/-- A variable's typing at a stated type (the lookup's computed type, by `rfl`). -/
+theorem hasBVar {env : VEnv} {U : Nat} {Γ : List VExpr} {i : Nat} {A B : VExpr}
+    (h : Lookup Γ i A) (e : A = B) : env.HasType U Γ (.bvar i) B := e ▸ .bvar h
+
+theorem motiveTy_wf : env3.HasType 1 [] motiveTy (.sort (.imax (.succ .zero) (.succ (.param 0)))) :=
+  .forallEDF (hasType_nat rfl _) (.sortDF (by decide) (by decide) rfl)
+theorem zTy_wf : env3.HasType 1 Γm zTy (.sort (.param 0)) :=
+  have hb0 : env3.HasType 1 Γm (.bvar 0) motiveTy := hasBVar .zero rfl
+  .appDF hb0 (hasType_zero rfl _)
+theorem sTy_wf : env3.HasType 1 Γz sTy
+    (.sort (.imax (.succ .zero) (.imax (.param 0) (.param 0)))) :=
+  have hb2 : env3.HasType 1 [natTy, zTy, motiveTy] (.bvar 2) motiveTy :=
+    hasBVar (.succ (.succ .zero)) rfl
+  have hb0 : env3.HasType 1 [natTy, zTy, motiveTy] (.bvar 0) natTy := hasBVar .zero rfl
+  have hMn : env3.HasType 1 [natTy, zTy, motiveTy] (.app (.bvar 2) (.bvar 0)) (.sort (.param 0)) :=
+    .appDF hb2 hb0
+  have hb3 : env3.HasType 1 [.app (.bvar 2) (.bvar 0), natTy, zTy, motiveTy] (.bvar 3) motiveTy :=
+    hasBVar (.succ (.succ (.succ .zero))) rfl
+  have hb1 : env3.HasType 1 [.app (.bvar 2) (.bvar 0), natTy, zTy, motiveTy] (.bvar 1) natTy :=
+    hasBVar (.succ .zero) rfl
+  have hsucc : env3.HasType 1 [.app (.bvar 2) (.bvar 0), natTy, zTy, motiveTy]
+      (.const ``Nat.succ []) (.forallE natTy natTy) := hasType_succ rfl _
+  have hMsn : env3.HasType 1 [.app (.bvar 2) (.bvar 0), natTy, zTy, motiveTy]
+      (.app (.bvar 3) (.app (.const ``Nat.succ []) (.bvar 1))) (.sort (.param 0)) :=
+    .appDF hb3 (.appDF hsucc hb1)
+  .forallEDF (hasType_nat rfl _) (.forallEDF hMn hMsn)
+theorem natTy_wf (Γ) : env3.HasType 1 Γ natTy (.sort (.succ .zero)) := hasType_nat rfl Γ
+
+theorem env1_ordered : env1.Ordered := .const (n := ``Nat) .empty natCI_wf rfl
+theorem env3_ordered : env3.Ordered :=
+  .const (n := ``Nat.succ) (.const (n := ``Nat.zero)
+    (.const (n := ``Nat) .empty natCI_wf rfl) zeroCI_wf rfl) succCI_wf rfl
+
+/-- The telescopes of the two rules are well formed (`env3`, `U = 1`). -/
+theorem ctx_s_wf : OnCtx Γs (env3.IsType 1) :=
+  ⟨⟨⟨trivial, _, motiveTy_wf⟩, _, zTy_wf⟩, _, sTy_wf⟩
+theorem ctx_n_wf : OnCtx Γn (env3.IsType 1) := ⟨ctx_s_wf, _, natTy_wf _⟩
+
+/-! ### The rules' open bodies
+
+`Ls ≡ Rs : Ts` in `Γn` (succ rule) and `Lz ≡ Rz : Tz` in `Γs` (zero rule) are the bodies of
+`iotaSuccLam` (4 binders stripped) and `iotaZeroLam` (3). -/
+
+def Ls : VExpr := recApp (.bvar 3) (.bvar 2) (.bvar 1) (.app (.const ``Nat.succ []) (.bvar 0))
+def Rs : VExpr := .app (.app (.bvar 1) (.bvar 0)) (recApp (.bvar 3) (.bvar 2) (.bvar 1) (.bvar 0))
+def Ts : VExpr := .app (.bvar 3) (.app (.const ``Nat.succ []) (.bvar 0))
+def Lz : VExpr := recApp (.bvar 2) (.bvar 1) (.bvar 0) (.const ``Nat.zero [])
+def Rz : VExpr := .bvar 1
+def Tz : VExpr := .app (.bvar 2) (.const ``Nat.zero [])
+
+/-! ### Ranks and the prefixes `envC.below rank k`
+
+E4's ranks: `Nat 0, zero 1, succ 1, rec 2` (every other name 2; it has no constant).
+`envC.below rank k` is extensionally `∅`, `env1`, `env3`, `envC` for `k = 0, 1, 2, ≥ 3`. -/
+
+def rank (c : Name) : Nat :=
+  if c = ``Nat then 0 else if c = ``Nat.zero then 1 else if c = ``Nat.succ then 1 else 2
+
+theorem envC_constants (c : Name) : envC.constants c =
+    if ``Nat.rec = c then some recCI else if ``Nat.succ = c then some succCI else
+    if ``Nat.zero = c then some zeroCI else if ``Nat = c then some natCI else none := rfl
+theorem env3_constants (c : Name) : env3.constants c =
+    if ``Nat.succ = c then some succCI else
+    if ``Nat.zero = c then some zeroCI else if ``Nat = c then some natCI else none := rfl
+theorem env1_constants (c : Name) : env1.constants c = if ``Nat = c then some natCI else none := rfl
+
+theorem rank_le (c : Name) : rank c ≤ 2 := by
+  unfold rank; repeat' split
+  all_goals decide
+
+theorem below_ge3 {k : Nat} (hk : 3 ≤ k) : envC.below rank k = envC := by
+  apply VEnv.ext
+  · funext c
+    simp only [VEnv.below]
+    rw [if_pos (Nat.lt_of_le_of_lt (rank_le c) hk)]
+  · funext df
+    apply propext
+    exact ⟨And.left, fun h => (h : False).elim⟩
+
+theorem below_2 : envC.below rank 2 = env3 := by
+  apply VEnv.ext
+  · funext c
+    by_cases h1 : c = ``Nat.rec; · subst h1; rfl
+    by_cases h2 : c = ``Nat.succ; · subst h2; rfl
+    by_cases h3 : c = ``Nat.zero; · subst h3; rfl
+    by_cases h4 : c = ``Nat; · subst h4; rfl
+    simp [VEnv.below, envC_constants, env3_constants, Ne.symm h1, Ne.symm h2, Ne.symm h3,
+      Ne.symm h4]
+  · funext df
+    apply propext
+    exact ⟨fun h => (h.1 : False).elim, fun h => (h : False).elim⟩
+
+theorem below_1 : envC.below rank 1 = env1 := by
+  apply VEnv.ext
+  · funext c
+    by_cases h1 : c = ``Nat.rec; · subst h1; rfl
+    by_cases h2 : c = ``Nat.succ; · subst h2; rfl
+    by_cases h3 : c = ``Nat.zero; · subst h3; rfl
+    by_cases h4 : c = ``Nat; · subst h4; rfl
+    simp [VEnv.below, envC_constants, env1_constants, Ne.symm h1, Ne.symm h2, Ne.symm h3,
+      Ne.symm h4]
+  · funext df
+    apply propext
+    exact ⟨fun h => (h.1 : False).elim, fun h => (h : False).elim⟩
+
+theorem below_0 : envC.below rank 0 = ∅ := by
+  apply VEnv.ext
+  · funext c
+    simp only [VEnv.below, Nat.not_lt_zero, if_false]
+    rfl
+  · funext df
+    apply propext
+    exact ⟨fun h => (h.1 : False).elim, fun h => h.elim⟩
+
+/-- `rank_ordered`: every prefix is one of the `Ordered` chains `∅`/`env1`/`env3`/`envC`. -/
+theorem rank_ordered : ∀ k, (envC.below rank k).Ordered
+  | 0 => by rw [below_0]; exact .empty
+  | 1 => by rw [below_1]; exact env1_ordered
+  | 2 => by rw [below_2]; exact env3_ordered
+  | k+3 => by rw [below_ge3 (by omega)]; exact envC_ordered
+
+theorem envC_constants_cases {c : Name} {ci : VConstant} (h : envC.constants c = some ci) :
+    (c = ``Nat.rec ∧ ci = recCI) ∨ (c = ``Nat.succ ∧ ci = succCI) ∨
+    (c = ``Nat.zero ∧ ci = zeroCI) ∨ (c = ``Nat ∧ ci = natCI) := by
+  rw [envC_constants] at h; repeat' split at h
+  all_goals simp_all
+
+/-- `Nat.succ`'s type only mentions `Nat`, so it is a type already in `env1`. -/
+theorem succCI_wf1 : succCI.WF env1 := ⟨_, .forallEDF (hasType_nat rfl []) (hasType_nat rfl _)⟩
+
+/-- `type_below`: each constant's type is a type in the prefix of its own rank. -/
+theorem type_below {c : Name} {ci : VConstant} (h : envC.constants c = some ci) :
+    (envC.below rank (rank c)).IsType ci.uvars [] ci.type := by
+  rcases envC_constants_cases h with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+  · rw [show rank ``Nat.rec = 2 from rfl, below_2]; exact recCI_wf
+  · rw [show rank ``Nat.succ = 1 from rfl, below_1]; exact succCI_wf1
+  · rw [show rank ``Nat.zero = 1 from rfl, below_1]; exact zeroCI_wf
+  · rw [show rank ``Nat = 0 from rfl, below_0]; exact natCI_wf
+
+/-! ### `Pattern.gen` on `envC`, both rules, by `rfl`
+
+The generated `ctx`/`lhs`/`rhs`/`type` are the open bodies of the λ-wrapped rules (`Γn ⊢ Ls ≡ Rs :
+Ts`, 4 binders stripped; `Γs ⊢ Lz ≡ Rz : Tz`, 3 binders), and the succ rule's recursive call
+`Nat.rec.{u}` (rank 2 = rank of the head) is its one self occurrence. -/
+
+/-- The succ rule's abstracted RHS `s n (self motive z s n)` in `[self, n, s, z, motive]`. -/
+def RsAbs : VExpr := .app (.app (.bvar 2) (.bvar 1))
+  (.app (.app (.app (.app (.bvar 0) (.bvar 4)) (.bvar 3)) (.bvar 2)) (.bvar 1))
+
+def genSucc : PatGen :=
+  { ctx := Γn, self := [recCI.type], lhs := Ls, rhs := Rs, rhsAbs := RsAbs, type := Ts }
+def genZero : PatGen :=
+  { ctx := Γs, self := [], lhs := Lz, rhs := Rz, rhsAbs := .bvar 1, type := Tz }
+
+theorem gen_succ : Pattern.gen envC rank classify succPat succRHS = some genSucc := rfl
+theorem gen_zero : Pattern.gen envC rank classify zeroPat zeroRHS = some genZero := rfl
+
+/-- Negative control: a wrong self list is rejected (so the `rfl` above is not vacuous). -/
+example : Pattern.gen envC rank classify succPat succRHS ≠ some { genSucc with self := [] } := by
+  rw [gen_succ]; intro h; cases h
+
+theorem head_succ : succPat.head = ``Nat.rec := rfl
+theorem head_zero : zeroPat.head = ``Nat.rec := rfl
+
+theorem pat_rank {p : Pattern} {r : p.RHS × p.Check} {c' : Name} {us : List VLevel}
+    (hP : Pat p r) (h : .const c' us ∈ r.1.fixedLeaves) : rank c' ≤ rank p.head := by
+  cases hP with
+  | zero => simp [zeroRHS, Pattern.RHS.fixedLeaves] at h
+  | succ =>
+    simp only [succRHS, Pattern.RHS.fixedLeaves, List.nil_append, List.append_nil,
+      List.mem_singleton, VExpr.const.injEq] at h
+    obtain ⟨rfl, -⟩ := h
+    exact Nat.le_refl _
+
+theorem pat_gen {p : Pattern} {r : p.RHS × p.Check} (hP : Pat p r) :
+    (Pattern.gen envC rank classify p r.1).isSome := by
+  cases hP with
+  | zero => rw [gen_zero]; rfl
+  | succ => rw [gen_succ]; rfl
+
+theorem pat_check {p : Pattern} {r : p.RHS × p.Check} (hP : Pat p r) : r.2 = .true := by
+  cases hP <;> rfl
+
+/-! ### `pat_typed`: the generated contexts and `rhsAbs` typed in `env3 = envC.below rank 2` -/
+
+abbrev Γr : List VExpr := recCI.type :: Γn
+
+/-- `[self : rec.type, n, s, z, motive]` is a well-formed context of `env3`. -/
+theorem ctx_r_wf : OnCtx Γr (env3.IsType 1) :=
+  ⟨ctx_n_wf, let ⟨_, h⟩ := recCI_wf; ⟨_, h.weak0 env3_ordered⟩⟩
+
+/-- `[self, n, s, z, motive] ⊢ s n (self motive z s n) : motive (succ n)` in `env3`. -/
+theorem RsAbs_wf : env3.HasType 1 Γr RsAbs (Ts.liftN 1) :=
+  have b0 : env3.HasType 1 Γr (.bvar 0) recCI.type := hasBVar .zero rfl
+  have b1 : env3.HasType 1 Γr (.bvar 1) natTy := hasBVar (.succ .zero) rfl
+  have b2 : env3.HasType 1 Γr (.bvar 2) (.forallE natTy (.forallE (.app (.bvar 5) (.bvar 0))
+      (.app (.bvar 6) (.app (.const ``Nat.succ []) (.bvar 1))))) :=
+    hasBVar (.succ (.succ .zero)) rfl
+  have b3 : env3.HasType 1 Γr (.bvar 3) (.app (.bvar 4) (.const ``Nat.zero [])) :=
+    hasBVar (.succ (.succ (.succ .zero))) rfl
+  have b4 : env3.HasType 1 Γr (.bvar 4) motiveTy :=
+    hasBVar (.succ (.succ (.succ (.succ .zero)))) rfl
+  (b2.app b1).app ((((b0.app b4).app b3).app b2).app b1)
+
+/-- The zero rule's `rhsAbs = z` in `[s, z, motive]`, in `env3`. -/
+theorem RzAbs_wf : env3.HasType 1 Γs (.bvar 1) (Tz.liftN 0) := hasBVar (.succ .zero) rfl
+
+theorem envC_const_rec : envC.constants ``Nat.rec = some recCI := rfl
+theorem envC_const_succ : envC.constants ``Nat.succ = some succCI := rfl
+theorem envC_const_zero : envC.constants ``Nat.zero = some zeroCI := rfl
+theorem envC_const_nat : envC.constants ``Nat = some natCI := rfl
+
+theorem pat_typed {p : Pattern} {r : p.RHS × p.Check} {g : PatGen} {ci : VConstant}
+    (hP : Pat p r) (hg : Pattern.gen envC rank classify p r.1 = some g)
+    (hci : envC.constants p.head = some ci) :
+    OnCtx (g.self ++ g.ctx) (fun Γ A => (envC.below rank (rank p.head)).IsType ci.uvars Γ A) ∧
+    (envC.below rank (rank p.head)).HasType ci.uvars (g.self ++ g.ctx) g.rhsAbs
+      (g.type.liftN g.self.length) := by
+  cases hP with
+  | zero =>
+    rw [gen_zero] at hg; cases hg
+    rw [head_zero, envC_const_rec] at hci; cases hci
+    rw [head_zero, show rank ``Nat.rec = 2 from rfl, below_2]
+    exact ⟨ctx_s_wf, RzAbs_wf⟩
+  | succ =>
+    rw [gen_succ] at hg; cases hg
+    rw [head_succ, envC_const_rec] at hci; cases hci
+    rw [head_succ, show rank ``Nat.rec = 2 from rfl, below_2]
+    exact ⟨ctx_r_wf, RsAbs_wf⟩
+
+/-! ### `pat_defeq`: false here
+
+It asks for the rules' open equations (`Γn ⊢ Ls ≡ Rs : Ts`, `Γs ⊢ Lz ≡ Rz : Tz`) in `envC`,
+which has no rules. E4 proves them over `envA` (`succ_open`, `zero_open`). -/
+
+theorem pat_defeq_nat {p : Pattern} {r : p.RHS × p.Check} {g : PatGen} {ci : VConstant} :
+    Pat p r → Pattern.gen envC rank classify p r.1 = some g →
+    envC.constants p.head = some ci →
+    envC.IsDefEq ci.uvars g.ctx g.lhs g.rhs g.type :=
+  sorry -- SORRY(R5): false over envC, which has no rules; R12 moves the instance to envA (docs/const-case/plan/E4/)
+
+/-! ### The classification fields -/
+
+theorem indTy_closed {I : Name} {k : Nat} {ci : VConstant} (hcl : classify I = some (.indTy k))
+    (hci : envC.constants I = some ci) : k = 0 ∧ ∃ u, ci.type = .sort u := by
+  rcases classify_cases hcl with ⟨rfl, h⟩ | ⟨rfl, h⟩ | ⟨rfl, h⟩ | ⟨rfl, h⟩ <;> cases h
+  rw [envC_const_nat] at hci; cases hci
+  exact ⟨rfl, _, rfl⟩
+
+theorem ctor_fields_closed {c : Name} {cl : Classification} {ci : VConstant}
+    (hctor : cl matches .ctor .. | .etaCtor ..) (hcl : classify c = some cl)
+    (hci : envC.constants c = some ci) :
+    ∃ (I : Name) (Ts : List VExpr), ci.type = Ts.foldr .forallE (.const I (VLevel.params ci.uvars)) ∧
+      ∀ T ∈ Ts, ∃ (I' : Name) (us : List VLevel), T = .const I' us ∧
+        classify I' = some (.indTy 0) := by
+  rcases classify_cases hcl with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+  · exact nomatch hctor
+  · rw [envC_const_zero] at hci; cases hci
+    exact ⟨``Nat, [], rfl, nofun⟩
+  · rw [envC_const_succ] at hci; cases hci
+    refine ⟨``Nat, [natTy], rfl, fun T hT => ?_⟩
+    rw [List.mem_singleton] at hT; subst hT
+    exact ⟨``Nat, [], rfl, rfl⟩
+  · exact nomatch hctor
+
 @[instance_reducible] def natParams : Params := {
   env := envC
   henv := envC_ordered
@@ -301,6 +579,16 @@ theorem ctor_sort_nat {c : Name} {cl : Classification} {ci : VConstant} {U : Nat
     · cases Option.some.inj hci; exact ⟨``Nat, [natTy], [], rfl, rfl, rfl⟩
     · exact nomatch hctor
   ctor_sort := ctor_sort_nat           -- SORRY (blocked)
+  rank := rank
+  rank_ordered := rank_ordered
+  type_below := type_below
+  pat_rank := pat_rank
+  pat_gen := pat_gen
+  pat_typed := pat_typed
+  pat_defeq := pat_defeq_nat           -- SORRY(R5) (false over `envC`)
+  pat_check := pat_check
+  indTy_closed := indTy_closed
+  ctor_fields_closed := ctor_fields_closed
 }
 
 #print axioms natParams
@@ -311,14 +599,20 @@ theorem ctor_sort_nat {c : Name} {cl : Classification} {ci : VConstant} {U : Nat
 #print axioms iotaZeroOpen_not_wf
 #print axioms ctor_sort_nat
 #print axioms envA_ordered
+#print axioms rank_ordered
+#print axioms type_below
+#print axioms pat_typed
+#print axioms pat_defeq_nat
 
 /-! ## Summary
 
 `sorry`s in this file (all marked `-- SORRY`):
 * `iotaZeroLam_wf`, `iotaSuccLam_wf` — typing of the lambda-wrapped rules (routine, long);
   only `envA_ordered` depends on them, and `envA` is the env on which `extra_patV` is refuted.
-* `ctor_sort_nat` — blocked on the repo's own sorried `IsDefEqU.sort_inv` (Injectivity.lean);
-  the only `sorryAx` reaching `natParams`.
+* `ctor_sort_nat` — blocked on the repo's own sorried `IsDefEqU.sort_inv` (Injectivity.lean).
+* `pat_defeq_nat` — false over `envC`, which has no rules; R12 moves the instance to `envA`,
+  where E4 proves it (`docs/const-case/plan/E4/NatParamsA.lean`, `succ_open`/`zero_open`).
+`ctor_sort_nat` and `pat_defeq_nat` are the two `sorryAx`s reaching `natParams`.
 
 Field status for `ℕ` (`natParams`, env = four constants, `Pat` = the two iota patterns):
 * `env`, `univs`, `Pat`, `classify`           — defined.
@@ -331,7 +625,13 @@ Field status for `ℕ` (`natParams`, env = four constants, `Pat` = the two iota 
   unmatchable `lam` lhs (`extra_patV_false_envA`); open-`bvar` is not `VDefEq.WF`
   (`iotaZeroOpen_not_wf`).  `Params` has no `Pat ⊆ env.defeqs` direction, so `Pat` may still
   hold the schematic rules.
-* `ctor_sort`                                  — true (`u ≈ 1`), proof needs sort inversion. -/
+* `ctor_sort`                                  — true (`u ≈ 1`), proof needs sort inversion.
+* `rank`, `rank_ordered`, `type_below`         — ranks `Nat 0, zero 1, succ 1, rec 2`; the
+  prefixes `envC.below rank k` are `∅`/`env1`/`env3`/`envC` (E4's proofs, over `envC`).
+* `pat_rank`, `pat_gen`, `pat_check`           — proven; `Pattern.gen` evaluated by `rfl`.
+* `pat_typed`                                  — proven, in `env3 = envC.below rank 2`.
+* `pat_defeq`                                  — **false** here (no rules); proven over `envA` in E4.
+* `indTy_closed`, `ctor_fields_closed`         — proven. -/
 
 end NatEnv
 end Lean4Lean

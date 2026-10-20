@@ -6,16 +6,24 @@ inhabit it. They are experiments, not part of the build; `./check.sh`
 typechecks them against the current tree.
 
 - `EmptyParams.lean`: `emptyParams`, an instance for `VEnv.empty`. Every field
-  is vacuous or `rfl`; no `sorry`. Shows the package is satisfiable.
+  is vacuous or `rfl` (`rank_ordered`: every rank prefix of `∅` is `∅`); no
+  `sorry`. Shows the package is satisfiable.
 - `NatParams.lean`: `natParams`, an instance for the environment with the four
   constants `Nat`, `Nat.zero`, `Nat.succ`, `Nat.rec` (encodings cross-checked
   against Lean's own declarations at elaboration time) and `Pat` holding the two
   iota patterns. `henv` (`envC_ordered`, including the typing of `Nat.rec`),
   `pat_simple`, `pat_wf`, `pat_uniq` (a finite `decide`), and `ctor_syn` are
-  proven. Three deliberate `sorry`s, each marked `-- SORRY`: `iotaZeroLam_wf`,
+  proven. So are the ten rank fields of PLAN D4/D3 (landed by R5): `rank`
+  (`Nat 0, zero 1, succ 1, rec 2`), `rank_ordered`, `type_below`, `pat_rank`,
+  `pat_gen` (`Pattern.gen` evaluated by `rfl`), `pat_typed`, `pat_check`,
+  `indTy_closed`, `ctor_fields_closed`, with E4's proofs
+  (`docs/const-case/plan/E4/NatParamsA.lean`) carried over to `envC`. Four
+  deliberate `sorry`s, each marked `-- SORRY`: `iotaZeroLam_wf`,
   `iotaSuccLam_wf` (routine typing of the lambda-wrapped rules, only used by
-  `envA_ordered`), and `ctor_sort_nat` (blocked on the repo's own sorried
-  `IsDefEqU.sort_inv`, `Theory/Typing/Injectivity.lean`).
+  `envA_ordered`), `ctor_sort_nat` (blocked on the repo's own sorried
+  `IsDefEqU.sort_inv`, `Theory/Typing/Injectivity.lean`), and `pat_defeq_nat`
+  (`pat_defeq` is false over `envC`, which has no rules; R12 moves the instance
+  to `envA`, where E4 proves it, and proves the two `*Lam_wf` there too).
 - `Schema.lean`: `Pattern.Matches.not_lam` and `Params.no_lam_rule`: no `Params`
   environment contains a rule whose left-hand side is a lambda. This is the
   finding below made precise, in two lemmas; no `sorry`.
@@ -47,6 +55,6 @@ together with the rule's *open typed equation* `Δ.reverse ⊢ L ≡ R : T` (the
 plan's audit found that the typed beta steps need the body typed at the
 declared codomain, and nothing else supplies that without Pi-injectivity). With
 `Δ = []` it is today's field. The plan also adds `pat_defeq` (every `Pat` rule
-is a definitional equality of `env`), which the current `natParams` violates
-(`env := envC` has no rules), so the ℕ instance moves to `envA`; its two
+is a definitional equality of `env`; landed by R5), which the current `natParams`
+violates (`env := envC` has no rules), so the ℕ instance moves to `envA`; its two
 routine typing sorries are exactly the open typed equations of the two rules.

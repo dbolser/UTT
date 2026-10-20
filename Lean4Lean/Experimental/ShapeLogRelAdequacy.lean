@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRel
+import Lean4Lean.Experimental.PatternGen
 
 namespace Lean4Lean
 

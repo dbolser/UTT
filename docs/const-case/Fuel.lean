@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before Pattern.gen and the rank fields landed (docs/const-case/PLAN.md D4/D3, landed by R5); no longer compiles.
 namespace Lean4Lean.SExpr
 variable [Params]
 

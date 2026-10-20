@@ -95,6 +95,436 @@ theorem VEnv.below_constants_of_lt {env : VEnv} {rank : Name → Nat} {k c ci}
     (hc : rank c < k) (h : env.constants c = some ci) : (env.below rank k).constants c = some ci := by
   simp only [below]; rw [if_pos hc]; exact h
 
+/-! ## `Pattern.gen` (docs/const-case/PLAN.md D4, item R5)
+
+The `Params`-free part: `Pattern.gen` and the spec lemmas (a) `gen_head`, (b) `gen_lhs`,
+(d) `gen_type`, (e) `gen_arity`, (g) `gen_self`. Their `SExpr` forms and the lemmas that use
+`Params` fields are in `Experimental/PatternGen.lean`.
+
+### Syntactic Π-telescopes -/
+
+/-- Strip `k` syntactic Π-binders: `piTelescope k e = some (Hs, B)` iff `e = Hs.foldr .forallE B`
+with `Hs.length = k` (outermost binder first). -/
+def VExpr.piTelescope : Nat → VExpr → Option (List VExpr × VExpr)
+  | 0, e => some ([], e)
+  | k+1, .forallE A B => (B.piTelescope k).map fun r => (A :: r.1, r.2)
+  | _+1, _ => none
+
+theorem VExpr.piTelescope_eq_some : ∀ {k : Nat} {e : VExpr} {Hs : List VExpr} {B : VExpr},
+    VExpr.piTelescope k e = some (Hs, B) → Hs.length = k ∧ e = Hs.foldr .forallE B
+  | 0, e, Hs, B, h => by
+    simp only [piTelescope, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h; exact ⟨rfl, rfl⟩
+  | k+1, .forallE A B', Hs, B, h => by
+    simp only [piTelescope, Option.map_eq_some_iff] at h
+    obtain ⟨⟨Hs', B''⟩, h1, h2⟩ := h
+    simp only [Prod.mk.injEq] at h2; obtain ⟨rfl, rfl⟩ := h2
+    obtain ⟨h3, rfl⟩ := piTelescope_eq_some h1
+    exact ⟨by simp [h3], rfl⟩
+  | _+1, .bvar _, _, _, h | _+1, .sort _, _, _, h | _+1, .const .., _, _, h
+  | _+1, .app .., _, _, h | _+1, .lam .., _, _, h => nomatch h
+
+theorem VExpr.piTelescope_foldr : ∀ (Hs : List VExpr) (B : VExpr),
+    VExpr.piTelescope Hs.length (Hs.foldr .forallE B) = some (Hs, B)
+  | [], _ => rfl
+  | A :: Hs, B => by simp [piTelescope, piTelescope_foldr Hs B]
+
+theorem VExpr.foldr_forallE_inj : ∀ {Hs Hs' : List VExpr} {B B' : VExpr}, Hs.length = Hs'.length →
+    Hs.foldr .forallE B = Hs'.foldr .forallE B' → Hs = Hs' ∧ B = B'
+  | [], [], _, _, _, h => ⟨rfl, h⟩
+  | A :: Hs, A' :: Hs', _, _, hl, h => by
+    simp only [List.foldr_cons, VExpr.forallE.injEq] at h
+    obtain ⟨h1, h2⟩ := foldr_forallE_inj (by simpa using hl) h.2
+    exact ⟨by rw [h.1, h1], h2⟩
+
+theorem VExpr.instL_foldr_forallE (us : List VLevel) : ∀ (Hs : List VExpr) (B : VExpr),
+    (Hs.foldr .forallE B).instL us = (Hs.map (·.instL us)).foldr .forallE (B.instL us)
+  | [], _ => rfl
+  | A :: Hs, B => by simp [VExpr.instL, instL_foldr_forallE us Hs B]
+
+/-! ### Pattern shapes, path indices, RHS translation -/
+
+/-- Recognise `varN (const c) k` (`asVarN_varN`, `eq_varN_of_asVarN`). -/
+def Pattern.asVarN : Pattern → Option (Name × Nat)
+  | .const c => some (c, 0)
+  | .var f => f.asVarN.map fun r => (r.1, r.2 + 1)
+  | .app .. => none
+
+theorem Pattern.asVarN_varN (c : Name) : ∀ n, (Pattern.varN (.const c) n).asVarN = some (c, n)
+  | 0 => rfl
+  | n+1 => by simp [Pattern.varN, asVarN, asVarN_varN c n]
+
+theorem Pattern.eq_varN_of_asVarN : ∀ {p : Pattern} {c : Name} {n : Nat},
+    p.asVarN = some (c, n) → p = .varN (.const c) n
+  | .const c', c, n, h => by
+    simp only [asVarN, Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, rfl⟩ := h; rfl
+  | .var f, c, n, h => by
+    simp only [asVarN, Option.map_eq_some_iff] at h
+    obtain ⟨⟨c', k⟩, h1, h2⟩ := h
+    simp only [Prod.mk.injEq] at h2; obtain ⟨rfl, rfl⟩ := h2
+    rw [eq_varN_of_asVarN h1]; rfl
+  | .app .., _, _, h => nomatch h
+
+theorem Pattern.head_varN (c : Name) : ∀ n, (Pattern.varN (.const c) n).head = c
+  | 0 => rfl
+  | n+1 => head_varN c n
+
+/-- The number of pattern variables (paths). -/
+def Pattern.nvars : Pattern → Nat
+  | .const _ => 0
+  | .app f a => f.nvars + a.nvars
+  | .var f => f.nvars + 1
+
+theorem Pattern.nvars_varN (p : Pattern) : ∀ n, (p.varN n).nvars = p.nvars + n
+  | 0 => rfl
+  | n+1 => by simp [Pattern.varN, nvars, nvars_varN p n]; omega
+
+/-- `Pattern.gen`'s path ↦ context-index map (`idx` of D4): the paths numbered innermost first,
+the last argument being `0`. For `app (varN (const rec) m) (varN (const c') n)` it sends
+`inl (some^i none) ↦ n + i` and `inr (some^i none) ↦ i` (`nvars_varN`). -/
+def Pattern.pathIdx : (p : Pattern) → p.Path → Nat
+  | .const _, x => Empty.elim x
+  | .app f a, x => Sum.elim (fun y => f.pathIdx y + a.nvars) (fun y => a.pathIdx y) x
+  | .var f, x => Option.elim x 0 (fun y => f.pathIdx y + 1)
+
+@[simp] theorem Pattern.pathIdx_inl {f a : Pattern} (x : f.Path) :
+    (Pattern.app f a).pathIdx (.inl x) = f.pathIdx x + a.nvars := rfl
+@[simp] theorem Pattern.pathIdx_inr {f a : Pattern} (x : a.Path) :
+    (Pattern.app f a).pathIdx (.inr x) = a.pathIdx x := rfl
+@[simp] theorem Pattern.pathIdx_none {f : Pattern} : (Pattern.var f).pathIdx none = 0 := rfl
+@[simp] theorem Pattern.pathIdx_some {f : Pattern} (x : f.Path) :
+    (Pattern.var f).pathIdx (some x) = f.pathIdx x + 1 := rfl
+
+/-- The closed leaves of an RHS, left to right (Measure6.lean:69). -/
+def Pattern.RHS.fixedLeaves {p : Pattern} : p.RHS → List VExpr
+  | .fixed e _ => [e]
+  | .var _ => []
+  | .app f a => f.fixedLeaves ++ a.fixedLeaves
+
+/-- The leaf occurrences selected by `sel`, in `fixedLeaves` order. -/
+def Pattern.RHS.selfLeaves {p : Pattern} (sel : VExpr → Bool) (r : p.RHS) : List VExpr :=
+  r.fixedLeaves.filter sel
+
+/-- The RHS as an open term, per occurrence: the `i`-th selected leaf occurrence (counted from
+`j`) becomes `bvar (j + i)`, `var path` becomes `bvar (k + pathIdx path)`, other leaves stay.
+Keyed by RHS position, not by `VExpr` (the patleaf refuter's `node l r` fix). -/
+def Pattern.RHS.toVExpr {p : Pattern} (sel : VExpr → Bool) (k : Nat) : p.RHS → Nat → VExpr
+  | .fixed e _, j => if sel e then .bvar j else e
+  | .var path, _ => .bvar (k + p.pathIdx path)
+  | .app f a, j => .app (f.toVExpr sel k j) (a.toVExpr sel k (j + (f.selfLeaves sel).length))
+
+/-- A bare-constant leaf of the same rank as the head `h` (abstracted as a self variable). -/
+def Pattern.sameRank (rank : Name → Nat) (h : Name) : VExpr → Bool
+  | .const c' _ => rank c' == rank h
+  | _ => false
+
+theorem Pattern.sameRank_eq_true {rank : Name → Nat} {h : Name} {e : VExpr} :
+    Pattern.sameRank rank h e = true ↔ ∃ c' us, e = .const c' us ∧ rank c' = rank h := by
+  cases e <;> simp [sameRank]
+
+/-- The type of a bare constant at its levels. -/
+def VExpr.constType (env : VEnv) : VExpr → Option VExpr
+  | .const c us => (env.constants c).map fun ci => ci.type.instL us
+  | _ => none
+
+/-- The self types of a list of bare-constant occurrences (`none` if one is not a constant of `env`). -/
+def Pattern.selfTypes (env : VEnv) : List VExpr → Option (List VExpr)
+  | [] => some []
+  | e :: es =>
+    match e.constType env, selfTypes env es with
+    | some T, some Ts => some (T :: Ts)
+    | _, _ => none
+
+theorem Pattern.selfTypes_eq_some {env : VEnv} : ∀ {es Ts : List VExpr},
+    Pattern.selfTypes env es = some Ts → Ts.length = es.length ∧
+      ∀ (j : Nat) (e : VExpr), es[j]? = some e → ∃ (c' : Name) (us : List VLevel) (ci' : VConstant),
+        e = .const c' us ∧ env.constants c' = some ci' ∧ Ts[j]? = some (ci'.type.instL us)
+  | [], Ts, h => by
+    simp only [selfTypes, Option.some.injEq] at h; subst h
+    exact ⟨rfl, fun _ _ h => by simp at h⟩
+  | e :: es, Ts, h => by
+    simp only [selfTypes] at h
+    split at h
+    · next T Ts' h1 h2 =>
+      simp only [Option.some.injEq] at h; subst h
+      obtain ⟨ih1, ih2⟩ := selfTypes_eq_some h2
+      refine ⟨by simp [ih1], fun j e' he => ?_⟩
+      cases j with
+      | zero =>
+        simp only [List.getElem?_cons_zero, Option.some.injEq] at he; subst he
+        cases e with
+        | const c' us =>
+          simp only [VExpr.constType, Option.map_eq_some_iff] at h1
+          obtain ⟨ci', h3, rfl⟩ := h1
+          exact ⟨c', us, ci', rfl, h3, rfl⟩
+        | _ => simp [VExpr.constType] at h1
+      | succ j => simpa using ih2 j e' (by simpa using he)
+    · cases h
+
+/-- `h (bvar (off+k-1)) … (bvar off)`. -/
+def VExpr.bvarSpine (h : VExpr) (k off : Nat) : VExpr :=
+  ((List.range k).reverse.map fun i => VExpr.bvar (off + i)).foldl .app h
+
+/-! ### `PatGen` and `Pattern.gen` -/
+
+/-- A rule's generated pattern context and open equation (PLAN D4). -/
+structure PatGen where
+  /-- innermost first: the ctor field types, then the head's first `m` binder types -/
+  ctx : List VExpr
+  /-- one closed type per same-rank bare-leaf occurrence of the RHS (innermost = first occurrence) -/
+  self : List VExpr
+  /-- the generic LHS, in `ctx` -/
+  lhs : VExpr
+  /-- the RHS, paths ↦ `bvar (pathIdx path)`, every fixed leaf kept; in `ctx` -/
+  rhs : VExpr
+  /-- the RHS with the same-rank bare leaves abstracted; in `self ++ ctx` -/
+  rhsAbs : VExpr
+  /-- the type of `lhs`, in `ctx` -/
+  type : VExpr
+
+/-- The iota part: `rec`'s type has `m` syntactic binders then a major `Π (_ : const I us)`,
+`c'` is a constructor of arity `n` whose type (at `us`) has `n` syntactic binders. -/
+def Pattern.genIota (env : VEnv) (classify : Name → Option Classification)
+    (rec : Name) (m : Nat) (c' : Name) (n : Nat) : Option (List VExpr × VExpr × VExpr) :=
+  match env.constants rec, env.constants c', classify c' with
+  | some ci, some ci', some (.ctor n') =>
+    match ci.type.piTelescope m with
+    | some (Hs, .forallE (.const _ us) Bmaj) =>
+      match (ci'.type.instL us).piTelescope n with
+      | some (Fs, _) =>
+        if n' = n then
+          some (Fs.reverse ++ Hs.reverse,
+            .app (VExpr.bvarSpine (.const rec (VLevel.params ci.uvars)) m n)
+              (VExpr.bvarSpine (.const c' us) n 0),
+            (Bmaj.liftN n 1).inst (VExpr.bvarSpine (.const c' us) n 0))
+        else none
+      | none => none
+    | _ => none
+  | _, _, _ => none
+
+/-- `(ctx, lhs, type)` for the two `SimplePattern` shapes; `none` for every other pattern. -/
+def Pattern.genCore (env : VEnv) (classify : Name → Option Classification) :
+    Pattern → Option (List VExpr × VExpr × VExpr)
+  | .const c => (env.constants c).map fun ci => ([], .const c (VLevel.params ci.uvars), ci.type)
+  | .app f a =>
+    match f.asVarN, a.asVarN with
+    | some (rec, m), some (c', n) => Pattern.genIota env classify rec m c' n
+    | _, _ => none
+  | .var _ => none
+
+/-- `Pattern.gen` (item R5): a function, so it leaves no junk witnesses
+(`PatTypedDegenerate.lean`, `JunkGen.lean`). -/
+def Pattern.gen (env : VEnv) (rank : Name → Nat) (classify : Name → Option Classification)
+    (p : Pattern) (r : p.RHS) : Option PatGen :=
+  match Pattern.selfTypes env (r.selfLeaves (Pattern.sameRank rank p.head)),
+    p.genCore env classify with
+  | some self, some (ctx, lhs, type) =>
+    some { ctx, self, lhs, type
+           rhs := r.toVExpr (fun _ => false) 0 0
+           rhsAbs := r.toVExpr (Pattern.sameRank rank p.head) self.length 0 }
+  | _, _ => none
+
+theorem Pattern.gen_eq_some {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {p : Pattern} {r : p.RHS} {g : PatGen} (hg : Pattern.gen env rank classify p r = some g) :
+    Pattern.selfTypes env (r.selfLeaves (Pattern.sameRank rank p.head)) = some g.self ∧
+    p.genCore env classify = some (g.ctx, g.lhs, g.type) ∧
+    g.rhs = r.toVExpr (fun _ => false) 0 0 ∧
+    g.rhsAbs = r.toVExpr (Pattern.sameRank rank p.head) g.self.length 0 := by
+  unfold Pattern.gen at hg
+  split at hg
+  · next h1 h2 => cases hg; exact ⟨h1, h2, rfl, rfl⟩
+  · cases hg
+
+theorem Pattern.genIota_eq_some {env : VEnv} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {ctx : List VExpr} {lhs type : VExpr}
+    (h : Pattern.genIota env classify rec m c' n = some (ctx, lhs, type)) :
+    ∃ (ci ci' : VConstant) (Hs : List VExpr) (I : Name) (us : List VLevel) (Bmaj : VExpr)
+      (Fs : List VExpr) (R' : VExpr),
+      env.constants rec = some ci ∧ env.constants c' = some ci' ∧
+      classify c' = some (.ctor n) ∧
+      ci.type.piTelescope m = some (Hs, .forallE (.const I us) Bmaj) ∧
+      (ci'.type.instL us).piTelescope n = some (Fs, R') ∧
+      ctx = Fs.reverse ++ Hs.reverse ∧
+      lhs = .app (VExpr.bvarSpine (.const rec (VLevel.params ci.uvars)) m n)
+        (VExpr.bvarSpine (.const c' us) n 0) ∧
+      type = (Bmaj.liftN n 1).inst (VExpr.bvarSpine (.const c' us) n 0) := by
+  unfold Pattern.genIota at h
+  split at h
+  · next ci ci' n' h1 h2 h3 =>
+    split at h
+    · next Hs I us Bmaj h4 =>
+      split at h
+      · next Fs R' h5 =>
+        split at h
+        · next hn =>
+          subst hn
+          simp only [Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl, rfl⟩ := h
+          exact ⟨ci, ci', Hs, I, us, Bmaj, Fs, R', h1, h2, h3, h4, h5, rfl, rfl, rfl⟩
+        · cases h
+      · cases h
+    · cases h
+  · cases h
+
+/-! ### Spec lemmas (a), (b), (d), (e), (g) -/
+
+/-- The iota pattern `rec x₁ … xₘ (c' z₁ … zₙ)` (`SimplePattern.iota`, Pattern.lean:240). -/
+abbrev Pattern.iota (rec : Name) (m : Nat) (c' : Name) (n : Nat) : Pattern :=
+  .app (.varN (.const rec) m) (.varN (.const c') n)
+
+theorem Pattern.iota_eq_toPattern (rec : Name) (m : Nat) (c' : Name) (n : Nat) :
+    Pattern.iota rec m c' n = (SimplePattern.iota rec m c' n).toPattern := rfl
+
+theorem Pattern.genCore_iota {env : VEnv} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {x : List VExpr × VExpr × VExpr}
+    (h : (Pattern.iota rec m c' n).genCore env classify = some x) :
+    Pattern.genIota env classify rec m c' n = some x := by
+  simpa [genCore, asVarN_varN] using h
+
+/-- Common unpacking of `hg` for the iota shape. -/
+theorem Pattern.gen_iota {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g) :
+    ∃ (ci ci' : VConstant) (Hs : List VExpr) (I : Name) (us : List VLevel) (Bmaj : VExpr)
+      (Fs : List VExpr) (R' : VExpr),
+      env.constants rec = some ci ∧ env.constants c' = some ci' ∧
+      classify c' = some (.ctor n) ∧
+      Hs.length = m ∧ ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj) ∧
+      Fs.length = n ∧ ci'.type.instL us = Fs.foldr .forallE R' ∧
+      g.ctx = Fs.reverse ++ Hs.reverse ∧
+      g.lhs = .app (VExpr.bvarSpine (.const rec (VLevel.params ci.uvars)) m n)
+        (VExpr.bvarSpine (.const c' us) n 0) ∧
+      g.type = (Bmaj.liftN n 1).inst (VExpr.bvarSpine (.const c' us) n 0) := by
+  obtain ⟨-, h2, -⟩ := Pattern.gen_eq_some hg
+  obtain ⟨ci, ci', Hs, I, us, Bmaj, Fs, R', h1, h2, h3, h4, h5, h6, h7, h8⟩ :=
+    Pattern.genIota_eq_some (Pattern.genCore_iota h2)
+  obtain ⟨l4, e4⟩ := VExpr.piTelescope_eq_some h4
+  obtain ⟨l5, e5⟩ := VExpr.piTelescope_eq_some h5
+  exact ⟨ci, ci', Hs, I, us, Bmaj, Fs, R', h1, h2, h3, l4, e4, l5, e5, h6, h7, h8⟩
+
+/-- Uniqueness of the recursor-type data `(Hs, I, us, Bmaj)` at a fixed length. -/
+theorem VExpr.foldr_forallE_major_inj {Hs Hs' : List VExpr} {I I' : Name} {us us' : List VLevel}
+    {B B' : VExpr} (hl : Hs.length = Hs'.length)
+    (h : Hs.foldr VExpr.forallE (.forallE (.const I us) B) =
+      Hs'.foldr VExpr.forallE (.forallE (.const I' us') B')) :
+    Hs = Hs' ∧ I = I' ∧ us = us' ∧ B = B' := by
+  obtain ⟨h1, h2⟩ := VExpr.foldr_forallE_inj hl h
+  simp only [VExpr.forallE.injEq, VExpr.const.injEq] at h2
+  exact ⟨h1, h2.1.1, h2.1.2, h2.2⟩
+
+/-- Spec lemma (a), `gen_head`. -/
+theorem Pattern.gen_head {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen} {ci : VConstant}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g)
+    (hci : env.constants rec = some ci) :
+    ∃ (Hs : List VExpr) (I : Name) (us : List VLevel) (Bmaj : VExpr),
+      Hs.length = m ∧ ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj) ∧
+      ∃ (ci' : VConstant) (Fs : List VExpr) (R' : VExpr),
+        classify c' = some (.ctor n) ∧ env.constants c' = some ci' ∧
+        Fs.length = n ∧ ci'.type.instL us = Fs.foldr .forallE R' ∧
+        g.ctx = Fs.reverse ++ Hs.reverse := by
+  obtain ⟨ci₀, ci', Hs, I, us, Bmaj, Fs, R', h1, h2, h3, l4, e4, l5, e5, h6, -, -⟩ := gen_iota hg
+  cases hci.symm.trans h1
+  exact ⟨Hs, I, us, Bmaj, l4, e4, ci', Fs, R', h3, h2, l5, e5, h6⟩
+
+/-- Spec lemma (b), VExpr form: the generic LHS `rec (bvar (n+m-1)) … (bvar n) (c' (bvar (n-1)) … (bvar 0))`,
+at the recursor's own level parameters and the major's levels `us`. -/
+theorem Pattern.gen_lhs {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen} {ci : VConstant}
+    {Hs : List VExpr} {I : Name} {us : List VLevel} {Bmaj : VExpr}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g)
+    (hci : env.constants rec = some ci) (hHs : Hs.length = m)
+    (hT : ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj)) :
+    g.lhs = .app (VExpr.bvarSpine (.const rec (VLevel.params ci.uvars)) m n)
+      (VExpr.bvarSpine (.const c' us) n 0) := by
+  obtain ⟨ci₀, -, Hs₀, I₀, us₀, Bmaj₀, -, -, h1, -, -, l4, e4, -, -, -, h7, -⟩ := gen_iota hg
+  cases hci.symm.trans h1
+  obtain ⟨-, -, rfl, -⟩ := VExpr.foldr_forallE_major_inj (hHs.trans l4.symm) (hT.symm.trans e4)
+  exact h7
+
+/-- Spec lemma (d), `gen_type`: the recursor's body with the major instantiated by the generic
+ctor spine (the body lifted past the `n` field variables). -/
+theorem Pattern.gen_type {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen} {ci : VConstant}
+    {Hs : List VExpr} {I : Name} {us : List VLevel} {Bmaj : VExpr}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g)
+    (hci : env.constants rec = some ci) (hHs : Hs.length = m)
+    (hT : ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj)) :
+    g.type = (Bmaj.liftN n 1).inst (VExpr.bvarSpine (.const c' us) n 0) := by
+  obtain ⟨ci₀, -, Hs₀, I₀, us₀, Bmaj₀, -, -, h1, -, -, l4, e4, -, -, -, -, h8⟩ := gen_iota hg
+  cases hci.symm.trans h1
+  obtain ⟨-, -, rfl, rfl⟩ := VExpr.foldr_forallE_major_inj (hHs.trans l4.symm) (hT.symm.trans e4)
+  exact h8
+
+/-- The delta shape `.const c`: `ctx = []`, `lhs = const c params`, `type = ci.type`. -/
+theorem Pattern.gen_delta {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {c : Name} {r : (Pattern.const c).RHS} {g : PatGen}
+    (hg : Pattern.gen env rank classify (.const c) r = some g) :
+    ∃ ci, env.constants c = some ci ∧ g.ctx = [] ∧ g.lhs = .const c (VLevel.params ci.uvars) ∧
+      g.type = ci.type := by
+  obtain ⟨-, h2, -⟩ := Pattern.gen_eq_some hg
+  simp only [genCore, Option.map_eq_some_iff, Prod.mk.injEq] at h2
+  obtain ⟨ci, h1, h2, h3, h4⟩ := h2
+  exact ⟨ci, h1, h2.symm, h3.symm, h4.symm⟩
+
+theorem Arity.varN_const {h c : Name} : ∀ {m k : Nat}, Arity (.const h) k (.varN (.const c) m) → k = m
+  | 0, _, H => by cases H; rfl
+  | m+1, _, H => by
+    cases H with
+    | var H => rw [Arity.varN_const H]
+
+/-- Spec lemma (e), `gen_arity` (iota and delta): the head's type has at least the pattern
+arity of syntactic Π-binders. -/
+theorem Pattern.gen_arity {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {p : Pattern} {r : p.RHS} {g : PatGen} {ci : VConstant} {k : Nat}
+    (hg : Pattern.gen env rank classify p r = some g) (hci : env.constants p.head = some ci)
+    (hk : Arity (.const p.head) k p) :
+    ∃ (Hs : List VExpr) (B : VExpr), Hs.length = k ∧ ci.type = Hs.foldr .forallE B := by
+  obtain ⟨-, h2, -⟩ := Pattern.gen_eq_some hg
+  match p, h2, hci, hk with
+  | .const c, _, _, hk => cases hk; exact ⟨[], ci.type, rfl, rfl⟩
+  | .app f a, h2, hci, hk =>
+    simp only [genCore] at h2
+    split at h2
+    · next rec m c' n hf ha =>
+      cases eq_varN_of_asVarN hf; cases eq_varN_of_asVarN ha
+      obtain ⟨ci₀, -, Hs, I, us, Bmaj, -, -, h1, -, -, t4, -⟩ := Pattern.genIota_eq_some h2
+      obtain ⟨l4, e4⟩ := VExpr.piTelescope_eq_some t4
+      have hhead : (Pattern.iota rec m c' n).head = rec := head_varN rec m
+      rw [hhead] at hci hk
+      cases hci.symm.trans h1
+      cases hk with
+      | app hk =>
+        cases Arity.varN_const hk
+        exact ⟨Hs ++ [.const I us], Bmaj, by simp [l4], by simp [e4]⟩
+    · cases h2
+  | .var _, h2, _, _ => cases h2
+
+theorem Pattern.RHS.mem_selfLeaves {p : Pattern} {sel : VExpr → Bool} {r : p.RHS} {e : VExpr} :
+    e ∈ r.selfLeaves sel ↔ e ∈ r.fixedLeaves ∧ sel e = true := List.mem_filter
+
+/-- Spec lemma (g), `gen_self`: one `self` entry per same-rank bare-constant leaf occurrence of
+the RHS (in `fixedLeaves` order), typed by the constant's type at the occurrence's levels. -/
+theorem Pattern.gen_self {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {p : Pattern} {r : p.RHS} {g : PatGen} (hg : Pattern.gen env rank classify p r = some g) :
+    g.self.length = (r.selfLeaves (Pattern.sameRank rank p.head)).length ∧
+    ∀ (j : Nat) (e : VExpr), (r.selfLeaves (Pattern.sameRank rank p.head))[j]? = some e →
+      ∃ (c' : Name) (us : List VLevel) (ci' : VConstant), e = .const c' us ∧
+        env.constants c' = some ci' ∧ rank c' = rank p.head ∧
+        g.self[j]? = some (ci'.type.instL us) := by
+  obtain ⟨h1, -⟩ := Pattern.gen_eq_some hg
+  obtain ⟨l1, h1⟩ := Pattern.selfTypes_eq_some h1
+  refine ⟨l1, fun j e he => ?_⟩
+  obtain ⟨c', us, ci', rfl, h2, h3⟩ := h1 j e he
+  have hsel := (Pattern.RHS.mem_selfLeaves.1 (List.mem_of_getElem? he)).2
+  obtain ⟨c'', us', he', hr⟩ := Pattern.sameRank_eq_true.1 hsel
+  cases he'
+  exact ⟨c', us, ci', rfl, h2, hr, h3⟩
+
+theorem Pattern.RHS.selfLeaves_app {p : Pattern} (sel : VExpr → Bool)
+    (f a : p.RHS) : (Pattern.RHS.app f a).selfLeaves sel = f.selfLeaves sel ++ a.selfLeaves sel := by
+  simp [Pattern.RHS.selfLeaves, Pattern.RHS.fixedLeaves, List.filter_append]
+
 class Params where
   env : VEnv
   henv : env.Ordered
@@ -147,6 +577,36 @@ class Params where
     (cl matches .ctor .. | .etaCtor ..) → classify c = some cl → env.constants c = some ci →
     (∀ l ∈ vs, l.WF U) → vs.length = ci.uvars →
     env.HasType U [] (ci.type.instL vs) (.sort u) → ∀ ns, u.eval ns ≠ 0
+  -- D4/D3's rank-measure fields (docs/const-case/PLAN.md D4, D3; E3's `RankParams`, E4's
+  -- `ParamsR`, text for text). `indTy_closed` and `ctor_fields_closed` are the stage-1a
+  -- restriction (D3).
+  rank : Name → Nat
+  rank_ordered : ∀ k, (env.below rank k).Ordered
+  type_below : ∀ {c : Name} {ci : VConstant}, env.constants c = some ci →
+    (env.below rank (rank c)).IsType ci.uvars [] ci.type
+  pat_rank : ∀ {p : Pattern} {r : p.RHS × p.Check} {c' : Name} {us : List VLevel},
+    Pat p r → .const c' us ∈ r.1.fixedLeaves → rank c' ≤ rank p.head
+  pat_gen : ∀ {p : Pattern} {r : p.RHS × p.Check}, Pat p r →
+    (Pattern.gen env rank classify p r.1).isSome
+  pat_typed : ∀ {p : Pattern} {r : p.RHS × p.Check} {g : PatGen} {ci : VConstant},
+    Pat p r → Pattern.gen env rank classify p r.1 = some g →
+    env.constants p.head = some ci →
+    OnCtx (g.self ++ g.ctx) (fun Γ A => (env.below rank (rank p.head)).IsType ci.uvars Γ A) ∧
+    (env.below rank (rank p.head)).HasType ci.uvars (g.self ++ g.ctx) g.rhsAbs
+      (g.type.liftN g.self.length)
+  pat_defeq : ∀ {p : Pattern} {r : p.RHS × p.Check} {g : PatGen} {ci : VConstant},
+    Pat p r → Pattern.gen env rank classify p r.1 = some g →
+    env.constants p.head = some ci →
+    env.IsDefEq ci.uvars g.ctx g.lhs g.rhs g.type
+  pat_check : ∀ {p : Pattern} {r : p.RHS × p.Check}, Pat p r → r.2 = .true
+  indTy_closed : ∀ {I : Name} {k : Nat} {ci : VConstant}, classify I = some (.indTy k) →
+    env.constants I = some ci → k = 0 ∧ ∃ u, ci.type = .sort u
+  ctor_fields_closed : ∀ {c : Name} {cl : Classification} {ci : VConstant},
+    (cl matches .ctor .. | .etaCtor ..) → classify c = some cl →
+    env.constants c = some ci →
+    ∃ (I : Name) (Ts : List VExpr), ci.type = Ts.foldr .forallE (.const I (VLevel.params ci.uvars)) ∧
+      ∀ T ∈ Ts, ∃ (I' : Name) (us : List VLevel), T = .const I' us ∧
+        classify I' = some (.indTy 0)
 open Params
 variable [Params]
 

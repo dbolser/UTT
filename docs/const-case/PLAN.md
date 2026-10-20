@@ -60,6 +60,20 @@
 > chain by `VEnv.ext`, `pat_defeq` and the λ-field's open equation derived from the rule's `extra`
 > instance by weaken + `appDF` + `beta` with no inversion (spec lemma (f) not needed), and NatParams'
 > `iotaSuccLam_wf`/`iotaZeroLam_wf` proved. No field had to change: no finding against R5.
+>
+> **R5 landed (2026-10-20, verified independently).** E3's Part 1 (`piTelescope`, `PatGen`,
+> `Pattern.gen`, the `Params`-free spec lemmas (a), (b), (d), (e), (g)) sits in `SExpr.lean` before
+> `class Params` (now at 528; the ten fields at 583-609, text-identical to E4's `ParamsR`; the old
+> `extra_patV` untouched, R6 swaps it); the `SExpr`-level lemmas ((b) under substitution, (c), (f),
+> (g) with `mkInst`, (e) with `mkInst`, `gen_head_ctor`, `Params.pat_arity`, `openSpine`,
+> `mkInst_instL`) are the new module `Lean4Lean/Experimental/PatternGen.lean`, imported by
+> `ShapeLogRelAdequacy.lean`. `Theory/Typing/Pattern.lean` was left alone (smaller rebuild). The rest
+> of E3's module (`EnvStrongR`, `WFIH`/`ConstGoal`/`LocalIH`, `const_spine`/`pat_leaf_1a` statements,
+> `const_local`, `const_case`) typechecks against the new tree with `RankParams` replaced by the
+> class fields (`/tmp/utt-exp/r5/R8Preview.lean`): that is R8, ready to land after R7. `SExpr.lean`
+> is 3698 lines (+460). `docs/params/EmptyParams.lean` has the fields (no sorry); `NatParams.lean`
+> has them over `envC` with `pat_defeq` a marked sorry until R12 (false without rules); `Fuel.lean`
+> and `plan/SelfType.lean` went historical.
 
 
 Critic-synthesizer, 2026-10-18; amended 2026-10-19 (audit rounds 1-3, §6). Repo `/home/dan/Build/UTT`, branch `unique-typing`, HEAD `3c35f59`.

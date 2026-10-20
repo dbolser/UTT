@@ -1,4 +1,5 @@
 import Lean4Lean.Experimental.ShapeLogRelAdequacy
+-- historical: typechecked at 3c35f59, before Pattern.gen and the rank fields landed (docs/const-case/PLAN.md D4/D3, landed by R5); no longer compiles.
 /-! Audit circ-3: the link between `LR.LocalIH` (ConstGoal at `mkInst ls' ci'.type`) and a
 `Pattern.gen` self entry (type `g.self[j]`, a VExpr `ci'.type.instL us` at the occurrence's
 levels, then `mkInst ls`). Spec lemmas (a)-(e) do not state what `g.self` is; this is the

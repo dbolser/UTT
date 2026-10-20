@@ -11,7 +11,8 @@ landed; `../check.sh` skips that directory. `TypedWhr.lean` and
 since R1+R2, which is where they went. `WeakE`, `MkSE`, `ForallInvE`,
 `EmptyBelow`, `JunkGen`, `PatLeafStmt`, `PatLeafStmt2` and `RhsLowerStmt`
 clash with `VEnv.below`, `IsDefEqStrong E`, `mkSE` and `telescope` since R4,
-likewise. `../check.sh` typechecks the rest. All are sorry-free except the
+likewise. `SelfType` clashes with `mkInst_instL` (`Experimental/PatternGen.lean`)
+since R5. `../check.sh` typechecks the rest. All are sorry-free except the
 four `*Stmt*.lean` files, whose theorem bodies are deliberate sorries (they
 pin statements for the experiments). `PLAN.md` cites them by bare name, with the tag [T].
 
