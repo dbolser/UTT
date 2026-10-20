@@ -667,6 +667,33 @@ theorem ctor_syn {c : Name} {cl : Classification} {ci : VConstant}
   · cases Option.some.inj hci; exact ⟨``Nat, [natTy], [], rfl, rfl, rfl⟩
   · exact nomatch hctor
 
+/-! ## The iota-rule invariants (PLAN D4, from E6) -/
+
+/-- The major domain of `Nat.rec` is `const Nat []`, and `Nat` is an inductive type. (In `envA`
+every constant domain of a top-level binder is `Nat`, so the proof does not need the rule.) -/
+theorem rec_major_indTy {rec c' : Name} {m n : Nat}
+    {r : (Pattern.iota rec m c' n).RHS × (Pattern.iota rec m c' n).Check} {ci : VConstant}
+    {Hs : List VExpr} {I : Name} {us : List VLevel} {Bmaj : VExpr}
+    (_ : Pat (.iota rec m c' n) r) (h1 : envA.constants rec = some ci)
+    (hty : ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj)) (_ : Hs.length = m) :
+    ∃ k, classify I = some (.indTy k) := by
+  have hI : I = ``Nat := by
+    rcases envA_constants_cases h1 with ⟨-, rfl⟩ | ⟨-, rfl⟩ | ⟨-, rfl⟩ | ⟨-, rfl⟩ <;>
+      rcases Hs with _ | ⟨_, _ | ⟨_, _ | ⟨_, _ | ⟨_, _ | ⟨_, _⟩⟩⟩⟩⟩ <;>
+      simp_all [recCI, succCI, zeroCI, natCI, natTy, motiveTy, zTy, sTy]
+  exact ⟨0, hI ▸ rfl⟩
+
+/-- Neither rule's right-hand side is a bare constructor field: `zeroRHS` is the minor `z`
+(`.var (.inl pZ)`), `succRHS` is an application. -/
+theorem rhs_not_field {rec c' : Name} {m n : Nat}
+    {r : (Pattern.iota rec m c' n).RHS × (Pattern.iota rec m c' n).Check}
+    (hP : Pat (.iota rec m c' n) r) : ∀ x, r.1 ≠ .var (.inr x) := by
+  -- generalize the two `varN`s, which `cases` cannot unify with the rules' patterns
+  suffices ∀ {f a : Pattern} {r : (Pattern.app f a).RHS × (Pattern.app f a).Check},
+      Pat (.app f a) r → ∀ x, r.1 ≠ .var (.inr x) from this hP
+  intro f a r hP
+  cases hP <;> nofun
+
 /-- `ctor_sort` for `ℕ`: every derivable sort of `Nat` (resp. `Nat → Nat`) is non-zero. -/
 theorem ctor_sort_nat {c : Name} {cl : Classification} {ci : VConstant} {U : Nat}
     {vs : List VLevel} {u : VLevel} :
@@ -773,6 +800,8 @@ two iota patterns, ranks `Nat 0, zero 1, succ 1, rec 2`. -/
   pat_check := pat_check
   indTy_closed := indTy_closed
   ctor_fields_closed := ctor_fields_closed
+  rec_major_indTy := rec_major_indTy
+  rhs_not_field := rhs_not_field
 }
 
 #print axioms natParams
@@ -813,7 +842,10 @@ rules; `Pat` = the two iota patterns):
 * `pat_typed`                                  — proven, in `env3 = envA.below rank 2`.
 * `pat_defeq`                                  — proven: the open equations `succ_open`,
   `zero_open` (the λ-rule applied to the context's variables, beta-reduced on both sides).
-* `indTy_closed`, `ctor_fields_closed`         — proven. -/
+* `indTy_closed`, `ctor_fields_closed`         — proven.
+* `rec_major_indTy`, `rhs_not_field`           — proven (PLAN D4, from E6; landed by R10):
+  `Nat.rec`'s major domain is `const Nat []` with `Nat` an `indTy`; `zeroRHS` is the minor `z`,
+  `succRHS` an application. -/
 
 end NatEnv
 end Lean4Lean

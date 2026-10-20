@@ -620,6 +620,30 @@ class Params where
     ∃ (I : Name) (Ts : List VExpr), ci.type = Ts.foldr .forallE (.const I (VLevel.params ci.uvars)) ∧
       ∀ T ∈ Ts, ∃ (I' : Name) (us : List VLevel), T = .const I' us ∧
         classify I' = some (.indTy 0)
+  -- The two iota-rule invariants the pattern leaf needs (PLAN D4, found by experiment E6).
+  /-- The head of a recursor's major domain is an inductive type: for an iota rule
+  `rec x₁ … xₘ (c' z₁ … zₙ)`, the `(m+1)`-th binder of `rec`'s type is `const I us` with
+  `classify I = indTy`. Kernel invariant (a recursor's major premise ranges over its inductive
+  type). The pattern leaf needs it because the major's constructor clause (`LRS.CtorDefEq`) only
+  gives a typed reduction of `const I ls'` to some `const I₂ ls₂`, with the constructor spine at
+  `ls₂`; an inductive type is not a `symb`, so `const I ls'` is a whnf, hence `ls₂ = ls'` (the
+  pattern's levels `us.map (instV ls)`), which both the instance `rec … (c'.{ls'} Xs)` of
+  `pat_defeq`'s open equation and the field entries of the lowered valuation need. Without it,
+  `ls₂ = ls'` would need injectivity of type-constructor levels under defeq (unique typing). -/
+  rec_major_indTy : ∀ {rec c' : Name} {m n : Nat}
+    {r : (Pattern.iota rec m c' n).RHS × (Pattern.iota rec m c' n).Check} {ci : VConstant}
+    {Hs : List VExpr} {I : Name} {us : List VLevel} {Bmaj : VExpr},
+    Pat (.iota rec m c' n) r → env.constants rec = some ci →
+    ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj) → Hs.length = m →
+    ∃ k, classify I = some (.indTy k)
+  /-- A rule's right-hand side is never a bare constructor-field variable: for an iota rule
+  `rec x₁ … xₘ (c' z₁ … zₙ)`, the RHS is not `zᵢ`. Kernel invariant (Lean's recursor rules have
+  RHS `minor fields ihs`). The pattern leaf needs it because at a bare field root the RHS shape is
+  the major's raw field shape, while the lowered valuation holds a Prop-valued field at `⊥`;
+  excluding a non-`⊥` element shape there would need sort/type uniqueness. -/
+  rhs_not_field : ∀ {rec c' : Name} {m n : Nat}
+    {r : (Pattern.iota rec m c' n).RHS × (Pattern.iota rec m c' n).Check},
+    Pat (.iota rec m c' n) r → ∀ x, r.1 ≠ .var (.inr x)
 open Params
 variable [Params]
 

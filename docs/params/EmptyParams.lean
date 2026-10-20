@@ -42,6 +42,9 @@ theorem VEnv.empty_below (rank : Name → Nat) (k : Nat) : VEnv.empty.below rank
   pat_check := fun h => False.elim h
   indTy_closed := fun h => nomatch h
   ctor_fields_closed := fun _ h => nomatch h
+  -- `Pat` is `False`
+  rec_major_indTy := fun h => False.elim h
+  rhs_not_field := fun h => False.elim h
 }
 
 #print axioms emptyParams

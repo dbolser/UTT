@@ -27,6 +27,12 @@ reaching `natParams` (exactly `ctor_sort_nat`).
   `type_below`, `pat_rank`, `pat_gen`, `pat_typed`, `pat_defeq` (every `Pat`
   rule's generated open equation is a definitional equality of `env`),
   `pat_check`, `indTy_closed`, `ctor_fields_closed`.
+- The two iota-rule invariants (PLAN D4, found by experiment E6, landed by
+  R10), both kernel invariants of Lean's recursor rules: `rec_major_indTy` (the
+  head of a recursor's major domain is an inductive type, so the major's
+  constructor clause is at the pattern's levels) and `rhs_not_field` (a rule's
+  right-hand side is never a bare constructor-field variable; Lean's recursor
+  rules have RHS `minor fields ihs`).
 
 ## The files
 
@@ -44,7 +50,9 @@ reaching `natParams` (exactly `ctor_sort_nat`).
   `Nat.rec` and of both λ-wrapped rules), `extra_patV` (each rule is the
   λ-closure of its open equation `zero_open`/`succ_open`, whose lhs matches the
   pattern), `pat_defeq` (the same open equations), `pat_uniq` (a finite
-  `decide`), `ctor_syn`, and the rank fields (`Pattern.gen` evaluated by `rfl`).
+  `decide`), `ctor_syn`, the rank fields (`Pattern.gen` evaluated by `rfl`),
+  and the two iota-rule invariants (`Nat.rec`'s major domain is `Nat`; the
+  rules' right-hand sides are `z` and an application).
   One deliberate `sorry`, marked `-- SORRY`: `ctor_sort_nat`, blocked on the
   repo's own sorried `IsDefEqU.sort_inv` (`Theory/Typing/Injectivity.lean`).
 - `Schema.lean` (historical: typechecked at `3c35f59`, no longer compiles
