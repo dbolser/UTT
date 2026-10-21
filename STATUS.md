@@ -463,10 +463,9 @@ Good first tasks:
   add it to CI on this fork, together with `docs/params/check.sh`.
 - Stage 2 of the plan (`docs/const-case/PLAN.md` D3): lift the stage-1a
   restriction to parametric and indexed inductives.
-- Cleanup after the landings: the two unused binders `hty`/`hdef` of
-  `LR.pat_leaf_1a` (now supplied by `Params.pat_typed`/`pat_defeq`), the
-  near-duplicate helpers between the spine lemma and the pattern leaf in
-  `ShapeLogRelAdequacy.lean`, and the size of that file.
+- Cleanup after the landings: the near-duplicate helpers between the spine
+  lemma and the pattern leaf in `ShapeLogRelAdequacy.lean`, and the size of
+  that file.
 - Backward reflection of Pi-injectivity to `VExpr` (§7).
 - `ctor_sort` for `ℕ` (`docs/params/NatParams.lean`, `ctor_sort_nat`) needs
   `IsDefEqU.sort_inv` (`Theory/Typing/Injectivity.lean`); currently `sorry`.

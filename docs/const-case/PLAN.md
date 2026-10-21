@@ -146,8 +146,8 @@
 > `a` (its major entry may have untyped fields): the leaf gets the RHS shape's interpretation from
 > `rhs_lower_core`'s root conjunct, a typed pair above it by soundness at `ρ_low`, and transfers the
 > type back to `B` at `ρ` (interpretations of a constructor spine lie below `ctor'` of the argument
-> shapes); the frozen `hty`/`hdef` binders of `pat_leaf_1a` are unused (`pat_typed`/`pat_defeq`
-> supply them). Every Lean item of §2 has landed (R11's wiring was absorbed into R8); R13 is the
+> shapes); the frozen `hty`/`hdef` binders of `pat_leaf_1a` were unused (`pat_typed`/`pat_defeq`
+> supply them) and were removed after the landing. Every Lean item of §2 has landed (R11's wiring was absorbed into R8); R13 is the
 > STATUS/PLAN write-up, done in these header paragraphs and STATUS §3-§8.
 
 

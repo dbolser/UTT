@@ -2468,8 +2468,9 @@ shape is interpreted at `ρ_low`; (3) the WF IH at `rank c` on `pat_typed`'s RHS
 (`LR.rhs_core`); (4) the rewrite by `Pattern.gen_rhsAbs`; (5) typed head reductions of both sides
 to the RHS instances (`WHRedS.major`, `WHRed.extra'`, `pat_defeq`); (6) `conv` from `B` at the
 major's ctor spine to `B` at `σ`, and the transfer to `(m, a)` (`LR.finish`). The iota case uses
-the two `Params` fields `rec_major_indTy` and `rhs_not_field` (through `pat_leaf_gap`). `hty` and
-`hdef` are not used: `Params.pat_typed` and `Params.pat_defeq` give them from `hP` and `hg`. -/
+the two `Params` fields `rec_major_indTy` and `rhs_not_field` (through `pat_leaf_gap`). The typing
+and defeq of the rule (`Params.pat_typed`, `Params.pat_defeq`) are taken from `hP` and `hg` where
+needed. -/
 theorem LR.pat_leaf_1a {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
     (WFIH : LR.WFIH Params.rank Γ₀ k) {c : Name} {ci : VConstant} {ls : List SLevel}
     (hc : Params.rank c < k) (h1 : Params.env.constants c = some ci) (h2 : ls.length = ci.uvars)
@@ -2480,11 +2481,6 @@ theorem LR.pat_leaf_1a {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
     (hP : Params.Pat p r) (hMt : LE_Interp.Matches p c rargs m2)
     (hRHS : LE_Interp.RHS ls m2 R mC r.1) (hchk : r.2 = .true)
     (g : PatGen) (hg : Pattern.gen Params.env Params.rank Params.classify p r.1 = some g)
-    (hty : OnCtx (g.self ++ g.ctx)
-        (fun Γ A => (Params.env.below Params.rank (Params.rank c)).IsType ci.uvars Γ A) ∧
-      (Params.env.below Params.rank (Params.rank c)).HasType ci.uvars (g.self ++ g.ctx) g.rhsAbs
-        (g.type.liftN g.self.length))
-    (hdef : Params.env.IsDefEq ci.uvars g.ctx g.lhs g.rhs g.type)
     {Ts : List SExpr} {B : SExpr} (hT : mkInst ls ci.type = Ts.foldr .forallE B)
     (hk : rargs.length = Ts.length)
     {ρ : Valuation} {σ σ' : Subst} (hρ : (Valuation.ofRargs rargs).LE ρ)
@@ -3007,7 +3003,7 @@ theorem LR.const_spine {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
     obtain rfl := LE_Interp.Matches.head hMt
     obtain ⟨g, hg⟩ := Option.isSome_iff_exists.1 (Params.pat_gen hP)
     exact LR.pat_leaf_1a WFIH hc h1 h2 LIH hR hP hMt hRHS (Params.pat_check hP) g hg
-      (Params.pat_typed hP hg h1) (Params.pat_defeq hP hg h1) hT hk hρ W le hA hmem tyV
+      hT hk hρ W le hA hmem tyV
 
 /-- `LR.const_local` (PLAN D4): induction on `hM` through the `R`-closure. Its only recursive
 calls are the local IH on the `Const` premise's sub-derivations (`ih7`) and the WF IH at
