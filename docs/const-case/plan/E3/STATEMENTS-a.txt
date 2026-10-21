@@ -1,0 +1,338 @@
+structure PatGen where
+  ctx : List VExpr
+  self : List VExpr
+  lhs : VExpr
+  rhs : VExpr
+  rhsAbs : VExpr
+  type : VExpr
+
+def VExpr.piTelescope : Nat → VExpr → Option (List VExpr × VExpr)
+  | 0, e => some ([], e)
+  | k+1, .forallE A B => (B.piTelescope k).map fun r => (A :: r.1, r.2)
+  | _+1, _ => none
+
+def Pattern.pathIdx : (p : Pattern) → p.Path → Nat
+  | .const _, x => Empty.elim x
+  | .app f a, x => Sum.elim (fun y => f.pathIdx y + a.nvars) (fun y => a.pathIdx y) x
+  | .var f, x => Option.elim x 0 (fun y => f.pathIdx y + 1)
+
+def Pattern.RHS.fixedLeaves {p : Pattern} : p.RHS → List VExpr
+  | .fixed e _ => [e]
+  | .var _ => []
+  | .app f a => f.fixedLeaves ++ a.fixedLeaves
+
+def Pattern.RHS.selfLeaves {p : Pattern} (sel : VExpr → Bool) (r : p.RHS) : List VExpr :=
+  r.fixedLeaves.filter sel
+
+def Pattern.RHS.toVExpr {p : Pattern} (sel : VExpr → Bool) (k : Nat) : p.RHS → Nat → VExpr
+  | .fixed e _, j => if sel e then .bvar j else e
+  | .var path, _ => .bvar (k + p.pathIdx path)
+  | .app f a, j => .app (f.toVExpr sel k j) (a.toVExpr sel k (j + (f.selfLeaves sel).length))
+
+def Pattern.sameRank (rank : Name → Nat) (h : Name) : VExpr → Bool
+  | .const c' _ => rank c' == rank h
+  | _ => false
+
+def VExpr.constType (env : VEnv) : VExpr → Option VExpr
+  | .const c us => (env.constants c).map fun ci => ci.type.instL us
+  | _ => none
+
+def Pattern.selfTypes (env : VEnv) : List VExpr → Option (List VExpr)
+  | [] => some []
+  | e :: es =>
+    match e.constType env, selfTypes env es with
+    | some T, some Ts => some (T :: Ts)
+    | _, _ => none
+
+def VExpr.bvarSpine (h : VExpr) (k off : Nat) : VExpr :=
+  ((List.range k).reverse.map fun i => VExpr.bvar (off + i)).foldl .app h
+
+def Pattern.genIota (env : VEnv) (classify : Name → Option Classification)
+    (rec : Name) (m : Nat) (c' : Name) (n : Nat) : Option (List VExpr × VExpr × VExpr) :=
+  match env.constants rec, env.constants c', classify c' with
+  | some ci, some ci', some (.ctor n') =>
+    match ci.type.piTelescope m with
+    | some (Hs, .forallE (.const _ us) Bmaj) =>
+      match (ci'.type.instL us).piTelescope n with
+      | some (Fs, _) =>
+        if n' = n then
+          some (Fs.reverse ++ Hs.reverse,
+            .app (VExpr.bvarSpine (.const rec (VLevel.params ci.uvars)) m n)
+              (VExpr.bvarSpine (.const c' us) n 0),
+            (Bmaj.liftN n 1).inst (VExpr.bvarSpine (.const c' us) n 0))
+        else none
+      | none => none
+    | _ => none
+  | _, _, _ => none
+
+def Pattern.genCore (env : VEnv) (classify : Name → Option Classification) :
+    Pattern → Option (List VExpr × VExpr × VExpr)
+  | .const c => (env.constants c).map fun ci => ([], .const c (VLevel.params ci.uvars), ci.type)
+  | .app f a =>
+    match f.asVarN, a.asVarN with
+    | some (rec, m), some (c', n) => Pattern.genIota env classify rec m c' n
+    | _, _ => none
+  | .var _ => none
+
+def Pattern.gen (env : VEnv) (rank : Name → Nat) (classify : Name → Option Classification)
+    (p : Pattern) (r : p.RHS) : Option PatGen :=
+  match Pattern.selfTypes env (r.selfLeaves (Pattern.sameRank rank p.head)),
+    p.genCore env classify with
+  | some self, some (ctx, lhs, type) =>
+    some { ctx, self, lhs, type
+           rhs := r.toVExpr (fun _ => false) 0 0
+           rhsAbs := r.toVExpr (Pattern.sameRank rank p.head) self.length 0 }
+  | _, _ => none
+
+abbrev Pattern.iota (rec : Name) (m : Nat) (c' : Name) (n : Nat) : Pattern :=
+  .app (.varN (.const rec) m) (.varN (.const c') n)
+
+theorem Pattern.gen_head {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen} {ci : VConstant}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g)
+    (hci : env.constants rec = some ci) :
+    ∃ (Hs : List VExpr) (I : Name) (us : List VLevel) (Bmaj : VExpr),
+      Hs.length = m ∧ ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj) ∧
+      ∃ (ci' : VConstant) (Fs : List VExpr) (R' : VExpr),
+        classify c' = some (.ctor n) ∧ env.constants c' = some ci' ∧
+        Fs.length = n ∧ ci'.type.instL us = Fs.foldr .forallE R' ∧
+        g.ctx = Fs.reverse ++ Hs.reverse
+
+theorem _root_.Lean4Lean.Pattern.gen_head_ctor {rank : Name → Nat}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen} {ci : VConstant}
+    (hg : Pattern.gen Params.env rank Params.classify (.iota rec m c' n) r = some g)
+    (hci : Params.env.constants rec = some ci) :
+    ∃ (Hs : List VExpr) (I : Name) (us : List VLevel) (Bmaj : VExpr),
+      Hs.length = m ∧ ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj) ∧
+      ∃ (ci' : VConstant) (I' : Name) (Ts args : List VExpr),
+        Params.env.constants c' = some ci' ∧ Params.classify c' = some (.ctor n) ∧
+        Ts.length = n ∧ Params.classify I' = some (.indTy args.length) ∧
+        ci'.type = Ts.foldr .forallE
+          (args.foldr (fun A acc => acc.app A) (.const I' (VLevel.params ci'.uvars))) ∧
+        g.ctx = (Ts.map (·.instL us)).reverse ++ Hs.reverse
+
+theorem Pattern.gen_lhs {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen} {ci : VConstant}
+    {Hs : List VExpr} {I : Name} {us : List VLevel} {Bmaj : VExpr}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g)
+    (hci : env.constants rec = some ci) (hHs : Hs.length = m)
+    (hT : ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj)) :
+    g.lhs = .app (VExpr.bvarSpine (.const rec (VLevel.params ci.uvars)) m n)
+      (VExpr.bvarSpine (.const c' us) n 0)
+
+theorem _root_.Lean4Lean.Pattern.gen_lhs_subst {env : VEnv} {rank : Name → Nat}
+    {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen} {ci : VConstant}
+    {Hs : List VExpr} {I : Name} {us : List VLevel} {Bmaj : VExpr}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g)
+    (hci : env.constants rec = some ci) (hHs : Hs.length = m)
+    (hT : ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj))
+    {ls : List SLevel} (hls : ls.length = ci.uvars) (σ : Subst) :
+    (mkInst ls g.lhs).subst σ =
+      .app (spine (.const rec ls) ((List.range m).reverse.map fun i => σ (n + i)))
+        (spine (.const c' (us.map (SLevel.instV ls))) ((List.range n).reverse.map σ))
+
+theorem _root_.Lean4Lean.Pattern.gen_lhs_openSpine {env : VEnv} {rank : Name → Nat}
+    {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen} {ci : VConstant}
+    {Hs : List VExpr} {I : Name} {us : List VLevel} {Bmaj : VExpr}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g)
+    (hci : env.constants rec = some ci) (hHs : Hs.length = m)
+    (hT : ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj))
+    {ls : List SLevel} (hls : ls.length = ci.uvars) (σ : Subst) :
+    (mkInst ls g.lhs).subst σ =
+      .app ((openSpine rec ls m).subst fun i => σ (n + i))
+        ((openSpine c' (us.map (SLevel.instV ls)) n).subst σ)
+
+theorem _root_.Lean4Lean.Pattern.RHS.toVExpr_subst {p : Pattern} (sel : VExpr → Bool) (k : Nat)
+    (ls : List SLevel) (m2 : p.Path → SExpr) (σ : Subst)
+    (hidx : ∀ path, σ (k + p.pathIdx path) = m2 path) :
+    ∀ (r : p.RHS) (j : Nat),
+      (∀ (i : Nat) (e : VExpr), (r.selfLeaves sel)[i]? = some e → σ (j + i) = mkInst ls e) →
+      (mkInst ls (r.toVExpr sel k j)).subst σ = r.applyS ls m2
+
+theorem _root_.Lean4Lean.Pattern.gen_rhsAbs {env : VEnv} {rank : Name → Nat}
+    {classify : Name → Option Classification} {p : Pattern} {r : p.RHS} {g : PatGen}
+    (hg : Pattern.gen env rank classify p r = some g)
+    (ls : List SLevel) (m2 : p.Path → SExpr) (σ : Subst)
+    (hself : ∀ (j : Nat) (e : VExpr), (r.selfLeaves (Pattern.sameRank rank p.head))[j]? = some e →
+      σ j = mkInst ls e)
+    (hidx : ∀ path, σ (g.self.length + p.pathIdx path) = m2 path) :
+    (mkInst ls g.rhsAbs).subst σ = r.applyS ls m2
+
+theorem Pattern.gen_type {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen} {ci : VConstant}
+    {Hs : List VExpr} {I : Name} {us : List VLevel} {Bmaj : VExpr}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g)
+    (hci : env.constants rec = some ci) (hHs : Hs.length = m)
+    (hT : ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj)) :
+    g.type = (Bmaj.liftN n 1).inst (VExpr.bvarSpine (.const c' us) n 0)
+
+theorem Pattern.gen_arity {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {p : Pattern} {r : p.RHS} {g : PatGen} {ci : VConstant} {k : Nat}
+    (hg : Pattern.gen env rank classify p r = some g) (hci : env.constants p.head = some ci)
+    (hk : Arity (.const p.head) k p) :
+    ∃ (Hs : List VExpr) (B : VExpr), Hs.length = k ∧ ci.type = Hs.foldr .forallE B
+
+theorem _root_.Lean4Lean.Pattern.gen_arity_mkInst {env : VEnv} {rank : Name → Nat}
+    {classify : Name → Option Classification}
+    {p : Pattern} {r : p.RHS} {g : PatGen} {ci : VConstant} {k : Nat}
+    (hg : Pattern.gen env rank classify p r = some g) (hci : env.constants p.head = some ci)
+    (hk : Arity (.const p.head) k p) (ls : List SLevel) :
+    ∃ (Hs : List SExpr) (B : SExpr), Hs.length = k ∧ mkInst ls ci.type = Hs.foldr .forallE B
+
+theorem RankParams.pat_arity (RP : RankParams) {p : Pattern} {r : p.RHS × p.Check}
+    {ci : VConstant} {k : Nat} (hP : Params.Pat p r) (hci : Params.env.constants p.head = some ci)
+    (hk : Arity (.const p.head) k p) :
+    ∃ (Hs : List VExpr) (B : VExpr), Hs.length = k ∧ ci.type = Hs.foldr .forallE B
+
+theorem _root_.Lean4Lean.Pattern.gen_rhs {env : VEnv} {rank : Name → Nat}
+    {classify : Name → Option Classification} {p : Pattern} {r : p.RHS} {g : PatGen}
+    (hg : Pattern.gen env rank classify p r = some g)
+    (ls : List SLevel) (m2 : p.Path → SExpr) (σ : Subst)
+    (hidx : ∀ path, σ (p.pathIdx path) = m2 path) :
+    (mkInst ls g.rhs).subst σ = r.applyS ls m2
+
+theorem Pattern.gen_self {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {p : Pattern} {r : p.RHS} {g : PatGen} (hg : Pattern.gen env rank classify p r = some g) :
+    g.self.length = (r.selfLeaves (Pattern.sameRank rank p.head)).length ∧
+    ∀ (j : Nat) (e : VExpr), (r.selfLeaves (Pattern.sameRank rank p.head))[j]? = some e →
+      ∃ (c' : Name) (us : List VLevel) (ci' : VConstant), e = .const c' us ∧
+        env.constants c' = some ci' ∧ rank c' = rank p.head ∧
+        g.self[j]? = some (ci'.type.instL us)
+
+theorem _root_.Lean4Lean.Pattern.gen_self_mkInst {env : VEnv} {rank : Name → Nat}
+    {classify : Name → Option Classification} {p : Pattern} {r : p.RHS} {g : PatGen}
+    (hg : Pattern.gen env rank classify p r = some g) {j : Nat} {e : VExpr}
+    (he : (r.selfLeaves (Pattern.sameRank rank p.head))[j]? = some e) (ls : List SLevel) :
+    ∃ (c' : Name) (us : List VLevel) (ci' : VConstant) (T : VExpr), e = .const c' us ∧
+      env.constants c' = some ci' ∧ rank c' = rank p.head ∧ g.self[j]? = some T ∧
+      mkInst ls e = .const c' (us.map (SLevel.instV ls)) ∧
+      mkInst ls T = mkInst (us.map (SLevel.instV ls)) ci'.type
+
+theorem Pattern.gen_delta {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {c : Name} {r : (Pattern.const c).RHS} {g : PatGen}
+    (hg : Pattern.gen env rank classify (.const c) r = some g) :
+    ∃ ci, env.constants c = some ci ∧ g.ctx = [] ∧ g.lhs = .const c (VLevel.params ci.uvars) ∧
+      g.type = ci.type
+
+structure RankParams where
+  rank : Name → Nat
+  rank_ordered : ∀ k, (Params.env.below rank k).Ordered
+  type_below : ∀ {c : Name} {ci : VConstant}, Params.env.constants c = some ci →
+    (Params.env.below rank (rank c)).IsType ci.uvars [] ci.type
+  pat_rank : ∀ {p : Pattern} {r : p.RHS × p.Check} {c' : Name} {us : List VLevel},
+    Params.Pat p r → .const c' us ∈ r.1.fixedLeaves → rank c' ≤ rank p.head
+  pat_gen : ∀ {p : Pattern} {r : p.RHS × p.Check}, Params.Pat p r →
+    (Pattern.gen Params.env rank Params.classify p r.1).isSome
+  pat_typed : ∀ {p : Pattern} {r : p.RHS × p.Check} {g : PatGen} {ci : VConstant},
+    Params.Pat p r → Pattern.gen Params.env rank Params.classify p r.1 = some g →
+    Params.env.constants p.head = some ci →
+    OnCtx (g.self ++ g.ctx) (fun Γ A => (Params.env.below rank (rank p.head)).IsType ci.uvars Γ A) ∧
+    (Params.env.below rank (rank p.head)).HasType ci.uvars (g.self ++ g.ctx) g.rhsAbs
+      (g.type.liftN g.self.length)
+  pat_defeq : ∀ {p : Pattern} {r : p.RHS × p.Check} {g : PatGen} {ci : VConstant},
+    Params.Pat p r → Pattern.gen Params.env rank Params.classify p r.1 = some g →
+    Params.env.constants p.head = some ci →
+    Params.env.IsDefEq ci.uvars g.ctx g.lhs g.rhs g.type
+  pat_check : ∀ {p : Pattern} {r : p.RHS × p.Check}, Params.Pat p r → r.2 = .true
+  indTy_closed : ∀ {I : Name} {k : Nat} {ci : VConstant}, Params.classify I = some (.indTy k) →
+    Params.env.constants I = some ci → k = 0 ∧ ∃ u, ci.type = .sort u
+  ctor_fields_closed : ∀ {c : Name} {cl : Classification} {ci : VConstant},
+    (cl matches .ctor .. | .etaCtor ..) → Params.classify c = some cl →
+    Params.env.constants c = some ci →
+    ∃ (I : Name) (Ts : List VExpr), ci.type = Ts.foldr .forallE (.const I (VLevel.params ci.uvars)) ∧
+      ∀ T ∈ Ts, ∃ (I' : Name) (us : List VLevel), T = .const I' us ∧
+        Params.classify I' = some (.indTy 0)
+
+structure EnvStrongR (RP : RankParams) : Prop where
+  const : ∀ {c : Name} {ci : VConstant} (ls : List SLevel), Params.env.constants c = some ci →
+    ∃ u, IsDefEqStrong (Params.env.below RP.rank (RP.rank c)) []
+      (mkInst ls ci.type) (mkInst ls ci.type) (.sort u)
+  ctx : ∀ {p : Pattern} {r : p.RHS × p.Check} {g : PatGen} {ci : VConstant} (ls : List SLevel),
+    Params.Pat p r → Pattern.gen Params.env RP.rank Params.classify p r.1 = some g →
+    Params.env.constants p.head = some ci →
+    ∀ (i : Nat) (A : VExpr), (g.self ++ g.ctx)[i]? = some A →
+    ∃ u, IsDefEqStrong (Params.env.below RP.rank (RP.rank p.head))
+      (((g.self ++ g.ctx).drop (i + 1)).map (mkInst ls)) (mkInst ls A) (mkInst ls A) (.sort u)
+  rhs : ∀ {p : Pattern} {r : p.RHS × p.Check} {g : PatGen} {ci : VConstant} (ls : List SLevel),
+    Params.Pat p r → Pattern.gen Params.env RP.rank Params.classify p r.1 = some g →
+    Params.env.constants p.head = some ci →
+    IsDefEqStrong (Params.env.below RP.rank (RP.rank p.head)) ((g.self ++ g.ctx).map (mkInst ls))
+      (mkInst ls g.rhsAbs) (mkInst ls g.rhsAbs) (mkInst ls (g.type.liftN g.self.length))
+
+theorem EnvStrongR.of_params (RP : RankParams) : EnvStrongR RP
+
+def openSpine (c : Name) (ls : List SLevel) (k : Nat) : SExpr :=
+  spine (.const c ls) ((List.range k).reverse.map .bvar)
+
+def Valuation.ofRargs {n} (rargs : List (WShape n)) : Valuation :=
+  rargs.foldr (fun x ρ => ρ.push x.T) .nil
+
+def LR.WFIH (rank : Name → Nat) (Γ₀ : List SExpr) (k : Nat) : Prop :=
+  ∀ k' < k, ∀ {Γ M N A}, IsDefEqStrong (Params.env.below rank k') Γ M N A →
+    ∀ {ρ n} {m a : WShape n}, LE_Interp ρ m.T M → LE_Interp ρ a.T A → m.HasType a →
+      LR.Adequate Γ₀ Γ ρ M N A m a
+
+def LR.ConstGoal (Γ₀ : List SExpr) (ρ : Valuation) (mT : TShape) (c : Name) (ls : List SLevel)
+    (ci : VConstant) : Prop :=
+  (∃ n, mT = (WShape.bot (n := n)).T) ∨
+  ∃ (n : Nat) (m' a' : WShape n), mT ≤ m'.T ∧ m'.HasType a' ∧ LE_Interp ρ a'.T (mkInst ls ci.type) ∧
+    ∀ {n'} (m a : WShape n'), m.T ≤ m'.T → LE_Interp ρ a.T (mkInst ls ci.type) → m.HasType a →
+      (LR Γ₀).DefEq (.const c ls) (.const c ls) (mkInst ls ci.type) m a
+
+def LR.LocalIH (rank : Name → Nat) (Γ₀ : List SExpr) (ρ₀ : Valuation) (c : Name)
+    (R : TShape → SExpr → Prop) : Prop :=
+  ∀ m e, R m e → ∀ c' ls' ci', e = .const c' ls' → rank c' = rank c →
+    Params.env.constants c' = some ci' → ls'.length = ci'.uvars → LR.ConstGoal Γ₀ ρ₀ m c' ls' ci'
+
+theorem LR.const_spine (RP : RankParams) {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
+    (WFIH : LR.WFIH RP.rank Γ₀ k) {c : Name} {ci : VConstant} {ls : List SLevel}
+    (hc : RP.rank c < k) (h1 : Params.env.constants c = some ci) (h2 : ls.length = ci.uvars)
+    {R : TShape → SExpr → Prop} (LIH : LR.LocalIH RP.rank Γ₀ ρ₀ c R)
+    {n : Nat} {rargs : List (WShape n)} {mC : TShape} (hC : LE_Interp.Const c ls R rargs mC)
+    {Ts : List SExpr} {B : SExpr} (hT : mkInst ls ci.type = Ts.foldr .forallE B)
+    (hk : rargs.length = Ts.length)
+    {ρ : Valuation} {σ σ' : Subst} (hρ : (Valuation.ofRargs rargs).LE ρ)
+    (W : LR.SubstWF Γ₀ σ σ' (Ts.reverse ++ Γ₀) ρ)
+    {n'} {m a : WShape n'} (le : m.T ≤ mC) (hA : LE_Interp ρ a.T B) (hmem : m.HasType a)
+    (tyV : ∀ {τ τ'}, LR.SubstWF Γ₀ τ τ' (Ts.reverse ++ Γ₀) ρ →
+      (LR Γ₀).TyDefEq (B.subst τ) (B.subst τ') a) :
+    (LR Γ₀).DefEq ((openSpine c ls Ts.length).subst σ) ((openSpine c ls Ts.length).subst σ')
+      (B.subst σ) m a
+
+theorem LR.pat_leaf_1a (RP : RankParams) {Γ₀ : List SExpr} {k : Nat} {ρ₀ : Valuation}
+    (WFIH : LR.WFIH RP.rank Γ₀ k) {c : Name} {ci : VConstant} {ls : List SLevel}
+    (hc : RP.rank c < k) (h1 : Params.env.constants c = some ci) (h2 : ls.length = ci.uvars)
+    {R : TShape → SExpr → Prop} (LIH : LR.LocalIH RP.rank Γ₀ ρ₀ c R)
+    {p : Pattern} {r : p.RHS × p.Check} {n : Nat} {rargs : List (WShape n)}
+    {m2 : p.Path → TShape} {mC : TShape}
+    (hP : Params.Pat p r) (hMt : LE_Interp.Matches p c rargs m2)
+    (hRHS : LE_Interp.RHS ls m2 R mC r.1) (hchk : r.2 = .true)
+    (g : PatGen) (hg : Pattern.gen Params.env RP.rank Params.classify p r.1 = some g)
+    (hty : OnCtx (g.self ++ g.ctx)
+        (fun Γ A => (Params.env.below RP.rank (RP.rank c)).IsType ci.uvars Γ A) ∧
+      (Params.env.below RP.rank (RP.rank c)).HasType ci.uvars (g.self ++ g.ctx) g.rhsAbs
+        (g.type.liftN g.self.length))
+    (hdef : Params.env.IsDefEq ci.uvars g.ctx g.lhs g.rhs g.type)
+    {Ts : List SExpr} {B : SExpr} (hT : mkInst ls ci.type = Ts.foldr .forallE B)
+    (hk : rargs.length = Ts.length)
+    {ρ : Valuation} {σ σ' : Subst} (hρ : (Valuation.ofRargs rargs).LE ρ)
+    (W : LR.SubstWF Γ₀ σ σ' (Ts.reverse ++ Γ₀) ρ)
+    {n'} {m a : WShape n'} (le : m.T ≤ mC) (hA : LE_Interp ρ a.T B) (hmem : m.HasType a)
+    (tyV : ∀ {τ τ'}, LR.SubstWF Γ₀ τ τ' (Ts.reverse ++ Γ₀) ρ →
+      (LR Γ₀).TyDefEq (B.subst τ) (B.subst τ') a) :
+    (LR Γ₀).DefEq ((openSpine c ls Ts.length).subst σ) ((openSpine c ls Ts.length).subst σ')
+      (B.subst σ) m a
+
+theorem LR.const_local (RP : RankParams) {Γ₀ : List SExpr} {k : Nat} {c₀ : Name}
+    (WFIH : LR.WFIH RP.rank Γ₀ k) (hΓ₀ : ⊢ Γ₀) (hc₀ : RP.rank c₀ < k) :
+    ∀ {ρ mT M} (_hM : LE_Interp ρ mT M) {c ls ci}, M = .const c ls → RP.rank c ≤ RP.rank c₀ →
+      Params.env.constants c = some ci → ls.length = ci.uvars → LR.ConstGoal Γ₀ ρ mT c ls ci
+
+theorem LR.const_case (RP : RankParams) {Γ₀ Γ : List SExpr} {k : Nat} (WFIH : LR.WFIH RP.rank Γ₀ k)
+    {c : Name} {ci : VConstant} {ls : List SLevel}
+    (h1 : (Params.env.below RP.rank k).constants c = some ci) (h2 : ls.length = ci.uvars)
+    {ρ : Valuation} {n : Nat} {m a : WShape n} (hM : LE_Interp ρ m.T (.const c ls))
+    (hA : LE_Interp ρ a.T (mkInst ls ci.type)) (hmem : m.HasType a) :
+    LR.Adequate Γ₀ Γ ρ (.const c ls) (.const c ls) (mkInst ls ci.type) m a

@@ -1,5 +1,6 @@
 import Lean4Lean.Theory.Typing.Lemmas
 import Lean4Lean.Theory.Typing.Pattern
+import Lean4Lean.Theory.Typing.Strong
 
 namespace Lean4Lean
 open Lean4Lean
@@ -20,6 +21,510 @@ def Pattern.WF (cl : Name → Option Classification) :
   | .var p, top, n => WF cl p top (n + 1)
   | .app p p', top, n => WF cl p top (n + 1) ∧ WF cl p' false
 
+/-- The head constant of a pattern. -/
+def Pattern.head : Pattern → Name
+  | .const c => c
+  | .app f _ => f.head
+  | .var f => f.head
+
+/-- The head of a top-level well-formed pattern is classified `symb`. -/
+theorem Pattern.WF.head_symb {cl : Name → Option Classification} :
+    ∀ (p : Pattern) {n}, p.WF cl true n → ∃ k, cl p.head = some (.symb k)
+  | .const _, _, h => ⟨_, h⟩
+  | .var f, _, h => Pattern.WF.head_symb f h
+  | .app f _, _, h => Pattern.WF.head_symb f h.1
+
+/-! ## Rank prefixes of an environment -/
+
+/-- Every constant occurring in `e` satisfies `P`. -/
+def VExpr.OnConsts (P : Name → Prop) : VExpr → Prop
+  | .bvar _ | .sort _ => True
+  | .const c _ => P c
+  | .app f a | .lam f a | .forallE f a => f.OnConsts P ∧ a.OnConsts P
+
+def VDefEq.OnConsts (P : Name → Prop) (df : VDefEq) : Prop :=
+  df.lhs.OnConsts P ∧ df.rhs.OnConsts P ∧ df.type.OnConsts P
+
+theorem VExpr.OnConsts.mono {P Q : Name → Prop} (h : ∀ c, P c → Q c) :
+    ∀ {e : VExpr}, e.OnConsts P → e.OnConsts Q
+  | .bvar _, _ | .sort _, _ => trivial
+  | .const _ _, hc => h _ hc
+  | .app .., ⟨h1, h2⟩ | .lam .., ⟨h1, h2⟩ | .forallE .., ⟨h1, h2⟩ => ⟨h1.mono h, h2.mono h⟩
+
+theorem VExpr.OnConsts.mono_k {rank : Name → Nat} {k k'} (h : k ≤ k') {e : VExpr}
+    (he : e.OnConsts (rank · < k)) : e.OnConsts (rank · < k') :=
+  he.mono fun _ h2 => Nat.lt_of_lt_of_le h2 h
+
+/-- `1 + max rank` of the constants of `e`; a bound witnessing finiteness. -/
+def VExpr.rankBound (rank : Name → Nat) : VExpr → Nat
+  | .bvar _ | .sort _ => 0
+  | .const c _ => rank c + 1
+  | .app f a | .lam f a | .forallE f a => max (f.rankBound rank) (a.rankBound rank)
+
+theorem VExpr.onConsts_rankBound (rank : Name → Nat) :
+    ∀ e : VExpr, e.OnConsts (rank · < e.rankBound rank)
+  | .bvar _ | .sort _ => trivial
+  | .const _ _ => Nat.lt_succ_self _
+  | .app f a | .lam f a | .forallE f a =>
+    ⟨(onConsts_rankBound rank f).mono fun _ h => Nat.lt_of_lt_of_le h (Nat.le_max_left ..),
+     (onConsts_rankBound rank a).mono fun _ h => Nat.lt_of_lt_of_le h (Nat.le_max_right ..)⟩
+
+/-- The environment prefix of rank `< k`: constants of rank `< k`, and the rules all of whose
+constants have rank `< k`. For Lean's kernel with `rank` = declaration index this is literally
+the environment after the first `k` declarations. -/
+def VEnv.below (env : VEnv) (rank : Name → Nat) (k : Nat) : VEnv where
+  constants c := if rank c < k then env.constants c else none
+  defeqs df := env.defeqs df ∧ df.OnConsts (rank · < k)
+
+theorem VEnv.below_le (env : VEnv) (rank : Name → Nat) (k : Nat) : env.below rank k ≤ env := by
+  refine ⟨fun h => ?_, fun h => h.1⟩
+  simp only [below] at h; split at h <;> simp_all
+
+theorem VEnv.below_mono (env : VEnv) (rank : Name → Nat) {k k' : Nat} (h : k ≤ k') :
+    env.below rank k ≤ env.below rank k' := by
+  refine ⟨fun h1 => ?_, fun h1 => ⟨h1.1, h1.2.1.mono_k h, h1.2.2.1.mono_k h, h1.2.2.2.mono_k h⟩⟩
+  simp only [below] at h1 ⊢; split at h1
+  · rw [if_pos (by omega)]; exact h1
+  · cases h1
+
+theorem VEnv.below_constants_lt {env : VEnv} {rank : Name → Nat} {k c ci}
+    (h : (env.below rank k).constants c = some ci) : rank c < k := by
+  simp only [below] at h; split at h <;> simp_all
+
+theorem VEnv.below_constants_of_lt {env : VEnv} {rank : Name → Nat} {k c ci}
+    (hc : rank c < k) (h : env.constants c = some ci) : (env.below rank k).constants c = some ci := by
+  simp only [below]; rw [if_pos hc]; exact h
+
+/-! ## `Pattern.gen` (docs/const-case/PLAN.md D4, item R5)
+
+The `Params`-free part: `Pattern.gen` and the spec lemmas (a) `gen_head`, (b) `gen_lhs`,
+(d) `gen_type`, (e) `gen_arity`, (g) `gen_self`. Their `SExpr` forms and the lemmas that use
+`Params` fields are in `Experimental/PatternGen.lean`.
+
+### Syntactic Π-telescopes -/
+
+/-- Strip `k` syntactic Π-binders: `piTelescope k e = some (Hs, B)` iff `e = Hs.foldr .forallE B`
+with `Hs.length = k` (outermost binder first). -/
+def VExpr.piTelescope : Nat → VExpr → Option (List VExpr × VExpr)
+  | 0, e => some ([], e)
+  | k+1, .forallE A B => (B.piTelescope k).map fun r => (A :: r.1, r.2)
+  | _+1, _ => none
+
+theorem VExpr.piTelescope_eq_some : ∀ {k : Nat} {e : VExpr} {Hs : List VExpr} {B : VExpr},
+    VExpr.piTelescope k e = some (Hs, B) → Hs.length = k ∧ e = Hs.foldr .forallE B
+  | 0, e, Hs, B, h => by
+    simp only [piTelescope, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h; exact ⟨rfl, rfl⟩
+  | k+1, .forallE A B', Hs, B, h => by
+    simp only [piTelescope, Option.map_eq_some_iff] at h
+    obtain ⟨⟨Hs', B''⟩, h1, h2⟩ := h
+    simp only [Prod.mk.injEq] at h2; obtain ⟨rfl, rfl⟩ := h2
+    obtain ⟨h3, rfl⟩ := piTelescope_eq_some h1
+    exact ⟨by simp [h3], rfl⟩
+  | _+1, .bvar _, _, _, h | _+1, .sort _, _, _, h | _+1, .const .., _, _, h
+  | _+1, .app .., _, _, h | _+1, .lam .., _, _, h => nomatch h
+
+theorem VExpr.piTelescope_foldr : ∀ (Hs : List VExpr) (B : VExpr),
+    VExpr.piTelescope Hs.length (Hs.foldr .forallE B) = some (Hs, B)
+  | [], _ => rfl
+  | A :: Hs, B => by simp [piTelescope, piTelescope_foldr Hs B]
+
+theorem VExpr.foldr_forallE_inj : ∀ {Hs Hs' : List VExpr} {B B' : VExpr}, Hs.length = Hs'.length →
+    Hs.foldr .forallE B = Hs'.foldr .forallE B' → Hs = Hs' ∧ B = B'
+  | [], [], _, _, _, h => ⟨rfl, h⟩
+  | A :: Hs, A' :: Hs', _, _, hl, h => by
+    simp only [List.foldr_cons, VExpr.forallE.injEq] at h
+    obtain ⟨h1, h2⟩ := foldr_forallE_inj (by simpa using hl) h.2
+    exact ⟨by rw [h.1, h1], h2⟩
+
+theorem VExpr.instL_foldr_forallE (us : List VLevel) : ∀ (Hs : List VExpr) (B : VExpr),
+    (Hs.foldr .forallE B).instL us = (Hs.map (·.instL us)).foldr .forallE (B.instL us)
+  | [], _ => rfl
+  | A :: Hs, B => by simp [VExpr.instL, instL_foldr_forallE us Hs B]
+
+/-! ### Pattern shapes, path indices, RHS translation -/
+
+/-- Recognise `varN (const c) k` (`asVarN_varN`, `eq_varN_of_asVarN`). -/
+def Pattern.asVarN : Pattern → Option (Name × Nat)
+  | .const c => some (c, 0)
+  | .var f => f.asVarN.map fun r => (r.1, r.2 + 1)
+  | .app .. => none
+
+theorem Pattern.asVarN_varN (c : Name) : ∀ n, (Pattern.varN (.const c) n).asVarN = some (c, n)
+  | 0 => rfl
+  | n+1 => by simp [Pattern.varN, asVarN, asVarN_varN c n]
+
+theorem Pattern.eq_varN_of_asVarN : ∀ {p : Pattern} {c : Name} {n : Nat},
+    p.asVarN = some (c, n) → p = .varN (.const c) n
+  | .const c', c, n, h => by
+    simp only [asVarN, Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, rfl⟩ := h; rfl
+  | .var f, c, n, h => by
+    simp only [asVarN, Option.map_eq_some_iff] at h
+    obtain ⟨⟨c', k⟩, h1, h2⟩ := h
+    simp only [Prod.mk.injEq] at h2; obtain ⟨rfl, rfl⟩ := h2
+    rw [eq_varN_of_asVarN h1]; rfl
+  | .app .., _, _, h => nomatch h
+
+theorem Pattern.head_varN (c : Name) : ∀ n, (Pattern.varN (.const c) n).head = c
+  | 0 => rfl
+  | n+1 => head_varN c n
+
+/-- The number of pattern variables (paths). -/
+def Pattern.nvars : Pattern → Nat
+  | .const _ => 0
+  | .app f a => f.nvars + a.nvars
+  | .var f => f.nvars + 1
+
+theorem Pattern.nvars_varN (p : Pattern) : ∀ n, (p.varN n).nvars = p.nvars + n
+  | 0 => rfl
+  | n+1 => by simp [Pattern.varN, nvars, nvars_varN p n]; omega
+
+/-- `Pattern.gen`'s path ↦ context-index map (`idx` of D4): the paths numbered innermost first,
+the last argument being `0`. For `app (varN (const rec) m) (varN (const c') n)` it sends
+`inl (some^i none) ↦ n + i` and `inr (some^i none) ↦ i` (`nvars_varN`). -/
+def Pattern.pathIdx : (p : Pattern) → p.Path → Nat
+  | .const _, x => Empty.elim x
+  | .app f a, x => Sum.elim (fun y => f.pathIdx y + a.nvars) (fun y => a.pathIdx y) x
+  | .var f, x => Option.elim x 0 (fun y => f.pathIdx y + 1)
+
+@[simp] theorem Pattern.pathIdx_inl {f a : Pattern} (x : f.Path) :
+    (Pattern.app f a).pathIdx (.inl x) = f.pathIdx x + a.nvars := rfl
+@[simp] theorem Pattern.pathIdx_inr {f a : Pattern} (x : a.Path) :
+    (Pattern.app f a).pathIdx (.inr x) = a.pathIdx x := rfl
+@[simp] theorem Pattern.pathIdx_none {f : Pattern} : (Pattern.var f).pathIdx none = 0 := rfl
+@[simp] theorem Pattern.pathIdx_some {f : Pattern} (x : f.Path) :
+    (Pattern.var f).pathIdx (some x) = f.pathIdx x + 1 := rfl
+
+/-- The closed leaves of an RHS, left to right (Measure6.lean:69). -/
+def Pattern.RHS.fixedLeaves {p : Pattern} : p.RHS → List VExpr
+  | .fixed e _ => [e]
+  | .var _ => []
+  | .app f a => f.fixedLeaves ++ a.fixedLeaves
+
+/-- The leaf occurrences selected by `sel`, in `fixedLeaves` order. -/
+def Pattern.RHS.selfLeaves {p : Pattern} (sel : VExpr → Bool) (r : p.RHS) : List VExpr :=
+  r.fixedLeaves.filter sel
+
+/-- The RHS as an open term, per occurrence: the `i`-th selected leaf occurrence (counted from
+`j`) becomes `bvar (j + i)`, `var path` becomes `bvar (k + pathIdx path)`, other leaves stay.
+Keyed by RHS position, not by `VExpr` (the patleaf refuter's `node l r` fix). -/
+def Pattern.RHS.toVExpr {p : Pattern} (sel : VExpr → Bool) (k : Nat) : p.RHS → Nat → VExpr
+  | .fixed e _, j => if sel e then .bvar j else e
+  | .var path, _ => .bvar (k + p.pathIdx path)
+  | .app f a, j => .app (f.toVExpr sel k j) (a.toVExpr sel k (j + (f.selfLeaves sel).length))
+
+/-- A bare-constant leaf of the same rank as the head `h` (abstracted as a self variable). -/
+def Pattern.sameRank (rank : Name → Nat) (h : Name) : VExpr → Bool
+  | .const c' _ => rank c' == rank h
+  | _ => false
+
+theorem Pattern.sameRank_eq_true {rank : Name → Nat} {h : Name} {e : VExpr} :
+    Pattern.sameRank rank h e = true ↔ ∃ c' us, e = .const c' us ∧ rank c' = rank h := by
+  cases e <;> simp [sameRank]
+
+/-- The type of a bare constant at its levels. -/
+def VExpr.constType (env : VEnv) : VExpr → Option VExpr
+  | .const c us => (env.constants c).map fun ci => ci.type.instL us
+  | _ => none
+
+/-- The self types of a list of bare-constant occurrences (`none` if one is not a constant of `env`). -/
+def Pattern.selfTypes (env : VEnv) : List VExpr → Option (List VExpr)
+  | [] => some []
+  | e :: es =>
+    match e.constType env, selfTypes env es with
+    | some T, some Ts => some (T :: Ts)
+    | _, _ => none
+
+theorem Pattern.selfTypes_eq_some {env : VEnv} : ∀ {es Ts : List VExpr},
+    Pattern.selfTypes env es = some Ts → Ts.length = es.length ∧
+      ∀ (j : Nat) (e : VExpr), es[j]? = some e → ∃ (c' : Name) (us : List VLevel) (ci' : VConstant),
+        e = .const c' us ∧ env.constants c' = some ci' ∧ Ts[j]? = some (ci'.type.instL us)
+  | [], Ts, h => by
+    simp only [selfTypes, Option.some.injEq] at h; subst h
+    exact ⟨rfl, fun _ _ h => by simp at h⟩
+  | e :: es, Ts, h => by
+    simp only [selfTypes] at h
+    split at h
+    · next T Ts' h1 h2 =>
+      simp only [Option.some.injEq] at h; subst h
+      obtain ⟨ih1, ih2⟩ := selfTypes_eq_some h2
+      refine ⟨by simp [ih1], fun j e' he => ?_⟩
+      cases j with
+      | zero =>
+        simp only [List.getElem?_cons_zero, Option.some.injEq] at he; subst he
+        cases e with
+        | const c' us =>
+          simp only [VExpr.constType, Option.map_eq_some_iff] at h1
+          obtain ⟨ci', h3, rfl⟩ := h1
+          exact ⟨c', us, ci', rfl, h3, rfl⟩
+        | _ => simp [VExpr.constType] at h1
+      | succ j => simpa using ih2 j e' (by simpa using he)
+    · cases h
+
+/-- `h (bvar (off+k-1)) … (bvar off)`. -/
+def VExpr.bvarSpine (h : VExpr) (k off : Nat) : VExpr :=
+  ((List.range k).reverse.map fun i => VExpr.bvar (off + i)).foldl .app h
+
+/-! ### `PatGen` and `Pattern.gen` -/
+
+/-- A rule's generated pattern context and open equation (PLAN D4). -/
+structure PatGen where
+  /-- innermost first: the ctor field types, then the head's first `m` binder types -/
+  ctx : List VExpr
+  /-- one closed type per same-rank bare-leaf occurrence of the RHS (innermost = first occurrence) -/
+  self : List VExpr
+  /-- the generic LHS, in `ctx` -/
+  lhs : VExpr
+  /-- the RHS, paths ↦ `bvar (pathIdx path)`, every fixed leaf kept; in `ctx` -/
+  rhs : VExpr
+  /-- the RHS with the same-rank bare leaves abstracted; in `self ++ ctx` -/
+  rhsAbs : VExpr
+  /-- the type of `lhs`, in `ctx` -/
+  type : VExpr
+
+/-- The iota part: `rec`'s type has `m` syntactic binders then a major `Π (_ : const I us)`,
+`c'` is a constructor of arity `n` whose type (at `us`) has `n` syntactic binders. -/
+def Pattern.genIota (env : VEnv) (classify : Name → Option Classification)
+    (rec : Name) (m : Nat) (c' : Name) (n : Nat) : Option (List VExpr × VExpr × VExpr) :=
+  match env.constants rec, env.constants c', classify c' with
+  | some ci, some ci', some (.ctor n') =>
+    match ci.type.piTelescope m with
+    | some (Hs, .forallE (.const _ us) Bmaj) =>
+      match (ci'.type.instL us).piTelescope n with
+      | some (Fs, _) =>
+        if n' = n then
+          some (Fs.reverse ++ Hs.reverse,
+            .app (VExpr.bvarSpine (.const rec (VLevel.params ci.uvars)) m n)
+              (VExpr.bvarSpine (.const c' us) n 0),
+            (Bmaj.liftN n 1).inst (VExpr.bvarSpine (.const c' us) n 0))
+        else none
+      | none => none
+    | _ => none
+  | _, _, _ => none
+
+/-- `(ctx, lhs, type)` for the two `SimplePattern` shapes; `none` for every other pattern. -/
+def Pattern.genCore (env : VEnv) (classify : Name → Option Classification) :
+    Pattern → Option (List VExpr × VExpr × VExpr)
+  | .const c => (env.constants c).map fun ci => ([], .const c (VLevel.params ci.uvars), ci.type)
+  | .app f a =>
+    match f.asVarN, a.asVarN with
+    | some (rec, m), some (c', n) => Pattern.genIota env classify rec m c' n
+    | _, _ => none
+  | .var _ => none
+
+/-- `Pattern.gen` (item R5): a function, so it leaves no junk witnesses
+(`PatTypedDegenerate.lean`, `JunkGen.lean`). -/
+def Pattern.gen (env : VEnv) (rank : Name → Nat) (classify : Name → Option Classification)
+    (p : Pattern) (r : p.RHS) : Option PatGen :=
+  match Pattern.selfTypes env (r.selfLeaves (Pattern.sameRank rank p.head)),
+    p.genCore env classify with
+  | some self, some (ctx, lhs, type) =>
+    some { ctx, self, lhs, type
+           rhs := r.toVExpr (fun _ => false) 0 0
+           rhsAbs := r.toVExpr (Pattern.sameRank rank p.head) self.length 0 }
+  | _, _ => none
+
+theorem Pattern.gen_eq_some {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {p : Pattern} {r : p.RHS} {g : PatGen} (hg : Pattern.gen env rank classify p r = some g) :
+    Pattern.selfTypes env (r.selfLeaves (Pattern.sameRank rank p.head)) = some g.self ∧
+    p.genCore env classify = some (g.ctx, g.lhs, g.type) ∧
+    g.rhs = r.toVExpr (fun _ => false) 0 0 ∧
+    g.rhsAbs = r.toVExpr (Pattern.sameRank rank p.head) g.self.length 0 := by
+  unfold Pattern.gen at hg
+  split at hg
+  · next h1 h2 => cases hg; exact ⟨h1, h2, rfl, rfl⟩
+  · cases hg
+
+theorem Pattern.genIota_eq_some {env : VEnv} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {ctx : List VExpr} {lhs type : VExpr}
+    (h : Pattern.genIota env classify rec m c' n = some (ctx, lhs, type)) :
+    ∃ (ci ci' : VConstant) (Hs : List VExpr) (I : Name) (us : List VLevel) (Bmaj : VExpr)
+      (Fs : List VExpr) (R' : VExpr),
+      env.constants rec = some ci ∧ env.constants c' = some ci' ∧
+      classify c' = some (.ctor n) ∧
+      ci.type.piTelescope m = some (Hs, .forallE (.const I us) Bmaj) ∧
+      (ci'.type.instL us).piTelescope n = some (Fs, R') ∧
+      ctx = Fs.reverse ++ Hs.reverse ∧
+      lhs = .app (VExpr.bvarSpine (.const rec (VLevel.params ci.uvars)) m n)
+        (VExpr.bvarSpine (.const c' us) n 0) ∧
+      type = (Bmaj.liftN n 1).inst (VExpr.bvarSpine (.const c' us) n 0) := by
+  unfold Pattern.genIota at h
+  split at h
+  · next ci ci' n' h1 h2 h3 =>
+    split at h
+    · next Hs I us Bmaj h4 =>
+      split at h
+      · next Fs R' h5 =>
+        split at h
+        · next hn =>
+          subst hn
+          simp only [Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl, rfl⟩ := h
+          exact ⟨ci, ci', Hs, I, us, Bmaj, Fs, R', h1, h2, h3, h4, h5, rfl, rfl, rfl⟩
+        · cases h
+      · cases h
+    · cases h
+  · cases h
+
+/-! ### Spec lemmas (a), (b), (d), (e), (g) -/
+
+/-- The iota pattern `rec x₁ … xₘ (c' z₁ … zₙ)` (`SimplePattern.iota`, Pattern.lean:240). -/
+abbrev Pattern.iota (rec : Name) (m : Nat) (c' : Name) (n : Nat) : Pattern :=
+  .app (.varN (.const rec) m) (.varN (.const c') n)
+
+theorem Pattern.iota_eq_toPattern (rec : Name) (m : Nat) (c' : Name) (n : Nat) :
+    Pattern.iota rec m c' n = (SimplePattern.iota rec m c' n).toPattern := rfl
+
+theorem Pattern.genCore_iota {env : VEnv} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {x : List VExpr × VExpr × VExpr}
+    (h : (Pattern.iota rec m c' n).genCore env classify = some x) :
+    Pattern.genIota env classify rec m c' n = some x := by
+  simpa [genCore, asVarN_varN] using h
+
+/-- Common unpacking of `hg` for the iota shape. -/
+theorem Pattern.gen_iota {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g) :
+    ∃ (ci ci' : VConstant) (Hs : List VExpr) (I : Name) (us : List VLevel) (Bmaj : VExpr)
+      (Fs : List VExpr) (R' : VExpr),
+      env.constants rec = some ci ∧ env.constants c' = some ci' ∧
+      classify c' = some (.ctor n) ∧
+      Hs.length = m ∧ ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj) ∧
+      Fs.length = n ∧ ci'.type.instL us = Fs.foldr .forallE R' ∧
+      g.ctx = Fs.reverse ++ Hs.reverse ∧
+      g.lhs = .app (VExpr.bvarSpine (.const rec (VLevel.params ci.uvars)) m n)
+        (VExpr.bvarSpine (.const c' us) n 0) ∧
+      g.type = (Bmaj.liftN n 1).inst (VExpr.bvarSpine (.const c' us) n 0) := by
+  obtain ⟨-, h2, -⟩ := Pattern.gen_eq_some hg
+  obtain ⟨ci, ci', Hs, I, us, Bmaj, Fs, R', h1, h2, h3, h4, h5, h6, h7, h8⟩ :=
+    Pattern.genIota_eq_some (Pattern.genCore_iota h2)
+  obtain ⟨l4, e4⟩ := VExpr.piTelescope_eq_some h4
+  obtain ⟨l5, e5⟩ := VExpr.piTelescope_eq_some h5
+  exact ⟨ci, ci', Hs, I, us, Bmaj, Fs, R', h1, h2, h3, l4, e4, l5, e5, h6, h7, h8⟩
+
+/-- Uniqueness of the recursor-type data `(Hs, I, us, Bmaj)` at a fixed length. -/
+theorem VExpr.foldr_forallE_major_inj {Hs Hs' : List VExpr} {I I' : Name} {us us' : List VLevel}
+    {B B' : VExpr} (hl : Hs.length = Hs'.length)
+    (h : Hs.foldr VExpr.forallE (.forallE (.const I us) B) =
+      Hs'.foldr VExpr.forallE (.forallE (.const I' us') B')) :
+    Hs = Hs' ∧ I = I' ∧ us = us' ∧ B = B' := by
+  obtain ⟨h1, h2⟩ := VExpr.foldr_forallE_inj hl h
+  simp only [VExpr.forallE.injEq, VExpr.const.injEq] at h2
+  exact ⟨h1, h2.1.1, h2.1.2, h2.2⟩
+
+/-- Spec lemma (a), `gen_head`. -/
+theorem Pattern.gen_head {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen} {ci : VConstant}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g)
+    (hci : env.constants rec = some ci) :
+    ∃ (Hs : List VExpr) (I : Name) (us : List VLevel) (Bmaj : VExpr),
+      Hs.length = m ∧ ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj) ∧
+      ∃ (ci' : VConstant) (Fs : List VExpr) (R' : VExpr),
+        classify c' = some (.ctor n) ∧ env.constants c' = some ci' ∧
+        Fs.length = n ∧ ci'.type.instL us = Fs.foldr .forallE R' ∧
+        g.ctx = Fs.reverse ++ Hs.reverse := by
+  obtain ⟨ci₀, ci', Hs, I, us, Bmaj, Fs, R', h1, h2, h3, l4, e4, l5, e5, h6, -, -⟩ := gen_iota hg
+  cases hci.symm.trans h1
+  exact ⟨Hs, I, us, Bmaj, l4, e4, ci', Fs, R', h3, h2, l5, e5, h6⟩
+
+/-- Spec lemma (b), VExpr form: the generic LHS `rec (bvar (n+m-1)) … (bvar n) (c' (bvar (n-1)) … (bvar 0))`,
+at the recursor's own level parameters and the major's levels `us`. -/
+theorem Pattern.gen_lhs {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen} {ci : VConstant}
+    {Hs : List VExpr} {I : Name} {us : List VLevel} {Bmaj : VExpr}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g)
+    (hci : env.constants rec = some ci) (hHs : Hs.length = m)
+    (hT : ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj)) :
+    g.lhs = .app (VExpr.bvarSpine (.const rec (VLevel.params ci.uvars)) m n)
+      (VExpr.bvarSpine (.const c' us) n 0) := by
+  obtain ⟨ci₀, -, Hs₀, I₀, us₀, Bmaj₀, -, -, h1, -, -, l4, e4, -, -, -, h7, -⟩ := gen_iota hg
+  cases hci.symm.trans h1
+  obtain ⟨-, -, rfl, -⟩ := VExpr.foldr_forallE_major_inj (hHs.trans l4.symm) (hT.symm.trans e4)
+  exact h7
+
+/-- Spec lemma (d), `gen_type`: the recursor's body with the major instantiated by the generic
+ctor spine (the body lifted past the `n` field variables). -/
+theorem Pattern.gen_type {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {rec c' : Name} {m n : Nat} {r : (Pattern.iota rec m c' n).RHS} {g : PatGen} {ci : VConstant}
+    {Hs : List VExpr} {I : Name} {us : List VLevel} {Bmaj : VExpr}
+    (hg : Pattern.gen env rank classify (.iota rec m c' n) r = some g)
+    (hci : env.constants rec = some ci) (hHs : Hs.length = m)
+    (hT : ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj)) :
+    g.type = (Bmaj.liftN n 1).inst (VExpr.bvarSpine (.const c' us) n 0) := by
+  obtain ⟨ci₀, -, Hs₀, I₀, us₀, Bmaj₀, -, -, h1, -, -, l4, e4, -, -, -, -, h8⟩ := gen_iota hg
+  cases hci.symm.trans h1
+  obtain ⟨-, -, rfl, rfl⟩ := VExpr.foldr_forallE_major_inj (hHs.trans l4.symm) (hT.symm.trans e4)
+  exact h8
+
+/-- The delta shape `.const c`: `ctx = []`, `lhs = const c params`, `type = ci.type`. -/
+theorem Pattern.gen_delta {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {c : Name} {r : (Pattern.const c).RHS} {g : PatGen}
+    (hg : Pattern.gen env rank classify (.const c) r = some g) :
+    ∃ ci, env.constants c = some ci ∧ g.ctx = [] ∧ g.lhs = .const c (VLevel.params ci.uvars) ∧
+      g.type = ci.type := by
+  obtain ⟨-, h2, -⟩ := Pattern.gen_eq_some hg
+  simp only [genCore, Option.map_eq_some_iff, Prod.mk.injEq] at h2
+  obtain ⟨ci, h1, h2, h3, h4⟩ := h2
+  exact ⟨ci, h1, h2.symm, h3.symm, h4.symm⟩
+
+theorem Arity.varN_const {h c : Name} : ∀ {m k : Nat}, Arity (.const h) k (.varN (.const c) m) → k = m
+  | 0, _, H => by cases H; rfl
+  | m+1, _, H => by
+    cases H with
+    | var H => rw [Arity.varN_const H]
+
+/-- Spec lemma (e), `gen_arity` (iota and delta): the head's type has at least the pattern
+arity of syntactic Π-binders. -/
+theorem Pattern.gen_arity {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {p : Pattern} {r : p.RHS} {g : PatGen} {ci : VConstant} {k : Nat}
+    (hg : Pattern.gen env rank classify p r = some g) (hci : env.constants p.head = some ci)
+    (hk : Arity (.const p.head) k p) :
+    ∃ (Hs : List VExpr) (B : VExpr), Hs.length = k ∧ ci.type = Hs.foldr .forallE B := by
+  obtain ⟨-, h2, -⟩ := Pattern.gen_eq_some hg
+  match p, h2, hci, hk with
+  | .const c, _, _, hk => cases hk; exact ⟨[], ci.type, rfl, rfl⟩
+  | .app f a, h2, hci, hk =>
+    simp only [genCore] at h2
+    split at h2
+    · next rec m c' n hf ha =>
+      cases eq_varN_of_asVarN hf; cases eq_varN_of_asVarN ha
+      obtain ⟨ci₀, -, Hs, I, us, Bmaj, -, -, h1, -, -, t4, -⟩ := Pattern.genIota_eq_some h2
+      obtain ⟨l4, e4⟩ := VExpr.piTelescope_eq_some t4
+      have hhead : (Pattern.iota rec m c' n).head = rec := head_varN rec m
+      rw [hhead] at hci hk
+      cases hci.symm.trans h1
+      cases hk with
+      | app hk =>
+        cases Arity.varN_const hk
+        exact ⟨Hs ++ [.const I us], Bmaj, by simp [l4], by simp [e4]⟩
+    · cases h2
+  | .var _, h2, _, _ => cases h2
+
+theorem Pattern.RHS.mem_selfLeaves {p : Pattern} {sel : VExpr → Bool} {r : p.RHS} {e : VExpr} :
+    e ∈ r.selfLeaves sel ↔ e ∈ r.fixedLeaves ∧ sel e = true := List.mem_filter
+
+/-- Spec lemma (g), `gen_self`: one `self` entry per same-rank bare-constant leaf occurrence of
+the RHS (in `fixedLeaves` order), typed by the constant's type at the occurrence's levels. -/
+theorem Pattern.gen_self {env : VEnv} {rank : Name → Nat} {classify : Name → Option Classification}
+    {p : Pattern} {r : p.RHS} {g : PatGen} (hg : Pattern.gen env rank classify p r = some g) :
+    g.self.length = (r.selfLeaves (Pattern.sameRank rank p.head)).length ∧
+    ∀ (j : Nat) (e : VExpr), (r.selfLeaves (Pattern.sameRank rank p.head))[j]? = some e →
+      ∃ (c' : Name) (us : List VLevel) (ci' : VConstant), e = .const c' us ∧
+        env.constants c' = some ci' ∧ rank c' = rank p.head ∧
+        g.self[j]? = some (ci'.type.instL us) := by
+  obtain ⟨h1, -⟩ := Pattern.gen_eq_some hg
+  obtain ⟨l1, h1⟩ := Pattern.selfTypes_eq_some h1
+  refine ⟨l1, fun j e he => ?_⟩
+  obtain ⟨c', us, ci', rfl, h2, h3⟩ := h1 j e he
+  have hsel := (Pattern.RHS.mem_selfLeaves.1 (List.mem_of_getElem? he)).2
+  obtain ⟨c'', us', he', hr⟩ := Pattern.sameRank_eq_true.1 hsel
+  cases he'
+  exact ⟨c', us, ci', rfl, h2, hr, h3⟩
+
+theorem Pattern.RHS.selfLeaves_app {p : Pattern} (sel : VExpr → Bool)
+    (f a : p.RHS) : (Pattern.RHS.app f a).selfLeaves sel = f.selfLeaves sel ++ a.selfLeaves sel := by
+  simp [Pattern.RHS.selfLeaves, Pattern.RHS.fixedLeaves, List.filter_append]
+
 class Params where
   env : VEnv
   henv : env.Ordered
@@ -39,11 +544,125 @@ class Params where
   --   Subpattern (.app p₁' p₂') p' → Subpattern p₃ p₁ → Subpattern p₃' p₂' → p₃.inter p₃' = none
   -- pat_app_r_arity : Pat p r → Pat p' r' → Subpattern (.app p₁ p₂) p →
   --   Subpattern (.app p₁' p₂') p' → Arity (.const c) n p₂ → Arity (.const c) n' p₂' → n = n'
-  -- extra_pat : env.defeqs df → (∀ l ∈ ls, l.WF uvars) → ls.length = df.uvars →
-  --   ∃ p r m1 m2, Pat p r ∧ p.Matches (df.lhs.instL ls) m1 m2 ∧ r.2.OK (IsDefEqU env univs Γ) m1 m2 ∧
-  --   df.rhs.instL ls = r.1.apply m1 m2
+  /-- Every defeq rule of the environment, instantiated at well-formed levels, is the λ-closure
+  over a telescope `Δ` of a well-typed open equation `L ≡ R : T` (with `Δ.reverse` a well-typed
+  context), whose left side `L` is an instance of some pattern `p` (with its side conditions
+  holding in `Δ.reverse ++ Γ`) and whose right side `R` is the pattern's right-hand side
+  (docs/const-case/PLAN.md D5). This is Lean4Lean's `vdefeq` convention (Theory/Meta.lean): a
+  recursor rule is stored as `λ Δ. lhs ≡ λ Δ. rhs : Π Δ. T`, and only its open body is a pattern
+  instance. The typed open equation is what types the beta steps through the binders without a
+  λ-inversion (`IsDefEq.beta` needs the body at the codomain). With `Δ = []` this is the former
+  field (an instance at the rule's own lhs) plus `env.IsDefEq univs [] L R T`, which is the
+  `extra` rule itself, so delta rules are unaffected. Stated on `VExpr`; the `SExpr` form is
+  derived as `SExpr.Params.extra_pat`. -/
+  extra_patV {df : VDefEq} {ls : List VLevel} {Γ : List VExpr} :
+    env.defeqs df → (∀ l ∈ ls, l.WF univs) → ls.length = df.uvars →
+    ∃ (Δ : List VExpr) (L R T : VExpr),
+      df.lhs.instL ls = Δ.foldr .lam L ∧ df.rhs.instL ls = Δ.foldr .lam R ∧
+      df.type.instL ls = Δ.foldr .forallE T ∧
+      OnCtx Δ.reverse (env.IsType univs) ∧
+      env.IsDefEq univs Δ.reverse L R T ∧
+      ∃ p r m1 m2, Pat p r ∧ p.Matches L m1 m2 ∧
+        r.2.OK (env.IsDefEqU univs (Δ.reverse ++ Γ)) m1 m2 ∧ R = r.1.apply m1 m2
+  /-- The type of a constructor (`classify c = ctor/etaCtor`) *is* syntactically a Π-telescope
+  `Ts` over an application of the inductive type `I` (at the constant's own universe parameters)
+  to `args`, with `Ts.length` the classified arity and `I` classified as an inductive type with
+  `args.length` indices.  Lean's kernel guarantees this shape for every constructor it accepts.
+  A merely *definitional* equation to such a telescope would not do: the strong judgment
+  `IsDefEqStrong.const` needs the equation as a strong derivation, and translating a defeq
+  derivation that lives in the full environment can require the strong typing of the very
+  constant whose type is being described (`IsDefEq.strong` is then unprovable in general). -/
+  ctor_syn {c : Name} {cl : Classification} {ci : VConstant} :
+    (cl matches .ctor .. | .etaCtor ..) → classify c = some cl → env.constants c = some ci →
+    ∃ (I : Name) (Ts args : List VExpr),
+      Ts.length = cl.arity ∧ classify I = some (.indTy args.length) ∧
+      ci.type = Ts.foldr .forallE
+        (args.foldr (fun A acc => acc.app A) (.const I (VLevel.params ci.uvars)))
+  /-- Every derivable sort of (an instance of) a constructor's type is non-zero under every
+  universe assignment.  This is what makes the instantiated sort `SLevel.mk u ≠ .zero` demanded
+  by `CtorBundle.hu0`; it excludes classifying constructors of universe-polymorphic inductives
+  that can be instantiated to `Prop` (e.g. `PUnit.{u}`), which must stay unclassified.  It is
+  stated for every derivable sort rather than one canonical sort because the strong `const`
+  rule ties the bundle's sort to the sort of the derivation at hand, and sort uniqueness is not
+  available at this point. -/
+  ctor_sort {c : Name} {cl : Classification} {ci : VConstant} {U : Nat} {vs : List VLevel}
+      {u : VLevel} :
+    (cl matches .ctor .. | .etaCtor ..) → classify c = some cl → env.constants c = some ci →
+    (∀ l ∈ vs, l.WF U) → vs.length = ci.uvars →
+    env.HasType U [] (ci.type.instL vs) (.sort u) → ∀ ns, u.eval ns ≠ 0
+  -- D4/D3's rank-measure fields (docs/const-case/PLAN.md D4, D3; E3's `RankParams`, E4's
+  -- `ParamsR`, text for text). `indTy_closed` and `ctor_fields_closed` are the stage-1a
+  -- restriction (D3).
+  rank : Name → Nat
+  rank_ordered : ∀ k, (env.below rank k).Ordered
+  type_below : ∀ {c : Name} {ci : VConstant}, env.constants c = some ci →
+    (env.below rank (rank c)).IsType ci.uvars [] ci.type
+  pat_rank : ∀ {p : Pattern} {r : p.RHS × p.Check} {c' : Name} {us : List VLevel},
+    Pat p r → .const c' us ∈ r.1.fixedLeaves → rank c' ≤ rank p.head
+  pat_gen : ∀ {p : Pattern} {r : p.RHS × p.Check}, Pat p r →
+    (Pattern.gen env rank classify p r.1).isSome
+  pat_typed : ∀ {p : Pattern} {r : p.RHS × p.Check} {g : PatGen} {ci : VConstant},
+    Pat p r → Pattern.gen env rank classify p r.1 = some g →
+    env.constants p.head = some ci →
+    OnCtx (g.self ++ g.ctx) (fun Γ A => (env.below rank (rank p.head)).IsType ci.uvars Γ A) ∧
+    (env.below rank (rank p.head)).HasType ci.uvars (g.self ++ g.ctx) g.rhsAbs
+      (g.type.liftN g.self.length)
+  pat_defeq : ∀ {p : Pattern} {r : p.RHS × p.Check} {g : PatGen} {ci : VConstant},
+    Pat p r → Pattern.gen env rank classify p r.1 = some g →
+    env.constants p.head = some ci →
+    env.IsDefEq ci.uvars g.ctx g.lhs g.rhs g.type
+  pat_check : ∀ {p : Pattern} {r : p.RHS × p.Check}, Pat p r → r.2 = .true
+  indTy_closed : ∀ {I : Name} {k : Nat} {ci : VConstant}, classify I = some (.indTy k) →
+    env.constants I = some ci → k = 0 ∧ ∃ u, ci.type = .sort u
+  ctor_fields_closed : ∀ {c : Name} {cl : Classification} {ci : VConstant},
+    (cl matches .ctor .. | .etaCtor ..) → classify c = some cl →
+    env.constants c = some ci →
+    ∃ (I : Name) (Ts : List VExpr), ci.type = Ts.foldr .forallE (.const I (VLevel.params ci.uvars)) ∧
+      ∀ T ∈ Ts, ∃ (I' : Name) (us : List VLevel), T = .const I' us ∧
+        classify I' = some (.indTy 0)
+  -- The two iota-rule invariants the pattern leaf needs (PLAN D4, found by experiment E6).
+  /-- The head of a recursor's major domain is an inductive type: for an iota rule
+  `rec x₁ … xₘ (c' z₁ … zₙ)`, the `(m+1)`-th binder of `rec`'s type is `const I us` with
+  `classify I = indTy`. Kernel invariant (a recursor's major premise ranges over its inductive
+  type). The pattern leaf needs it because the major's constructor clause (`LRS.CtorDefEq`) only
+  gives a typed reduction of `const I ls'` to some `const I₂ ls₂`, with the constructor spine at
+  `ls₂`; an inductive type is not a `symb`, so `const I ls'` is a whnf, hence `ls₂ = ls'` (the
+  pattern's levels `us.map (instV ls)`), which both the instance `rec … (c'.{ls'} Xs)` of
+  `pat_defeq`'s open equation and the field entries of the lowered valuation need. Without it,
+  `ls₂ = ls'` would need injectivity of type-constructor levels under defeq (unique typing). -/
+  rec_major_indTy : ∀ {rec c' : Name} {m n : Nat}
+    {r : (Pattern.iota rec m c' n).RHS × (Pattern.iota rec m c' n).Check} {ci : VConstant}
+    {Hs : List VExpr} {I : Name} {us : List VLevel} {Bmaj : VExpr},
+    Pat (.iota rec m c' n) r → env.constants rec = some ci →
+    ci.type = Hs.foldr .forallE (.forallE (.const I us) Bmaj) → Hs.length = m →
+    ∃ k, classify I = some (.indTy k)
+  /-- A rule's right-hand side is never a bare constructor-field variable: for an iota rule
+  `rec x₁ … xₘ (c' z₁ … zₙ)`, the RHS is not `zᵢ`. Kernel invariant (Lean's recursor rules have
+  RHS `minor fields ihs`). The pattern leaf needs it because at a bare field root the RHS shape is
+  the major's raw field shape, while the lowered valuation holds a Prop-valued field at `⊥`;
+  excluding a non-`⊥` element shape there would need sort/type uniqueness. -/
+  rhs_not_field : ∀ {rec c' : Name} {m n : Nat}
+    {r : (Pattern.iota rec m c' n).RHS × (Pattern.iota rec m c' n).Check},
+    Pat (.iota rec m c' n) r → ∀ x, r.1 ≠ .var (.inr x)
 open Params
 variable [Params]
+
+/-- The former `Params` field: a constructor's type is definitionally (indeed syntactically) a
+Π-telescope over its inductive type, at a sort that is never zero. -/
+theorem Params.ctor_tyV {c : Name} {cl : Classification} {ci : VConstant}
+    (hctor : cl matches .ctor .. | .etaCtor ..) (hcl : classify c = some cl)
+    (hci : env.constants c = some ci) :
+    ∃ (I : Name) (Ts args : List VExpr) (u : VLevel),
+      Ts.length = cl.arity ∧ classify I = some (.indTy args.length) ∧ (∀ ns, u.eval ns ≠ 0) ∧
+      env.IsDefEq ci.uvars [] ci.type
+        (Ts.foldr .forallE
+          (args.foldr (fun A acc => acc.app A) (.const I (VLevel.params ci.uvars))))
+        (.sort u) := by
+  obtain ⟨I, Ts, args, hTs, hI, heq⟩ := ctor_syn hctor hcl hci
+  have ⟨u, hu⟩ := henv.constWF hci
+  have hwf : ci.type.LevelWF ci.uvars := (hu.levelWF ⟨⟩).1
+  refine ⟨I, Ts, args, u, hTs, hI, ?_, heq ▸ hu⟩
+  exact ctor_sort hctor hcl hci VLevel.params_wf VLevel.params_length (by rwa [hwf.instL_id])
 
 /-- A semantically quotiented version of `VLevel`. This avoids the need for some congruences. -/
 def SLevel := { f : List Nat → Nat // ∃ l : VLevel, l.WF univs ∧ l.eval = f }
@@ -53,6 +672,26 @@ namespace SLevel
 def zero : SLevel := ⟨_, .zero, ⟨⟩, rfl⟩
 
 def mk (l : VLevel) : SLevel := if h : l.WF univs then ⟨_, l, h, rfl⟩ else .zero
+
+theorem mk_of_wf (h : l.WF univs) : mk l = (⟨_, l, h, rfl⟩ : SLevel) := by
+  have hm : mk l = if h' : l.WF univs then
+      (⟨_, l, h', rfl⟩ : SLevel) else SLevel.zero := rfl
+  rw [hm]
+  exact dif_pos h
+
+theorem mk_eq (hl : l.WF univs) (hl' : l'.WF univs) (h : l ≈ l') : mk l = mk l' := by
+  rw [mk_of_wf hl, mk_of_wf hl']
+  apply Subtype.ext
+  exact VLevel.equiv_def'.1 h
+
+@[simp] theorem mk_zero : mk .zero = zero := by
+  apply Subtype.ext
+  rfl
+
+theorem mk_val (h : l.WF univs) : (mk l).1 = l.eval := by rw [mk_of_wf h]
+
+theorem mk_inj (hl : l.WF univs) (hl' : l'.WF univs) (h : mk l = mk l') : l ≈ l' :=
+  VLevel.equiv_def'.2 (by rw [← mk_val hl, ← mk_val hl', h])
 
 def succ (l : SLevel) : SLevel :=
   ⟨fun v => l.1 v + 1, let ⟨u, h1, h2⟩ := l.2; ⟨u.succ, h1, h2 ▸ rfl⟩⟩
@@ -64,6 +703,20 @@ def max (l₁ l₂ : SLevel) : SLevel :=
 def imax (l₁ l₂ : SLevel) : SLevel :=
   ⟨fun v => Lean.Nat.imax (l₁.1 v) (l₂.1 v),
     let ⟨u, h1, h2⟩ := l₁.2; let ⟨v, h3, h4⟩ := l₂.2; ⟨u.imax v, ⟨h1, h3⟩, h2 ▸ h4 ▸ rfl⟩⟩
+
+@[simp] theorem mk_succ (h : l.WF univs) : mk l.succ = succ (mk l) := by
+  have hs : l.succ.WF univs := h
+  rw [mk_of_wf hs, mk_of_wf h]; apply Subtype.ext; rfl
+
+@[simp] theorem mk_max (h1 : l₁.WF univs) (h2 : l₂.WF univs) :
+    mk (.max l₁ l₂) = max (mk l₁) (mk l₂) := by
+  rw [mk_of_wf (l := l₁.max l₂) ⟨h1, h2⟩, mk_of_wf h1, mk_of_wf h2]
+  apply Subtype.ext; rfl
+
+@[simp] theorem mk_imax (h1 : l₁.WF univs) (h2 : l₂.WF univs) :
+    mk (.imax l₁ l₂) = imax (mk l₁) (mk l₂) := by
+  rw [mk_of_wf (l := l₁.imax l₂) ⟨h1, h2⟩, mk_of_wf h1, mk_of_wf h2]
+  apply Subtype.ext; rfl
 
 def inst (ls : List SLevel) (l : SLevel) : SLevel := by
   refine ⟨fun v => l.1 (ls.map (·.1 v)), ?_⟩
@@ -81,6 +734,87 @@ def inst (ls : List SLevel) (l : SLevel) : SLevel := by
   · simp [VLevel.eval_inst, ← h2]; congr 1
     rw [← List.forall₂_eq, List.forall₂_map_left_iff, List.forall₂_map_right_iff]
     exact h3.imp fun _ _ h => congrFun h.2 _
+
+/-- Instantiate a syntactic level directly into semantic levels. Unlike `inst ls (mk l)`,
+this does not require `l` to be well-formed in the ambient universe context. -/
+def instV (ls : List SLevel) (l : VLevel) : SLevel := by
+  refine ⟨fun v => l.eval (ls.map (·.1 v)), ?_⟩
+  have ⟨ls', h⟩ :
+      ∃ ls' : List VLevel, ls'.Forall₂ (fun l' l => l'.WF univs ∧ l'.eval = l.1) ls := by
+    induction ls with
+    | nil => exact ⟨_, .nil⟩
+    | cons a ls ih =>
+      let ⟨l', h1, h2⟩ := a.2
+      let ⟨ls', ih⟩ := ih
+      exact ⟨l' :: ls', .cons ⟨h1, h2⟩ ih⟩
+  refine ⟨l.inst ls', VLevel.WF.inst fun _ hl => ?_, ?_⟩
+  · let ⟨_, hl⟩ := h.forall_exists_l _ hl; exact hl.2.1
+  · funext v
+    simp only [VLevel.eval_inst]
+    congr 1
+    rw [← List.forall₂_eq, List.forall₂_map_left_iff, List.forall₂_map_right_iff]
+    exact h.imp fun _ _ hl => congrFun hl.2 _
+
+theorem instV_map_mk (hls : ∀ u ∈ ls, u.WF univs) :
+    instV (ls.map mk) l = mk (l.inst ls) := by
+  apply Subtype.ext
+  funext ns
+  rw [congrFun (mk_val (VLevel.WF.inst hls)) ns]
+  simp only [VLevel.eval_inst]
+  change l.eval ((ls.map mk).map fun u => u.1 ns) = l.eval (ls.map (VLevel.eval ns))
+  congr 1
+  simp only [List.map_map]
+  apply List.map_congr_left
+  intro u hu
+  exact congrFun (mk_val (hls u hu)) ns
+
+theorem mk_inst (hl : l.WF univs) (hls : ∀ u ∈ ls, u.WF univs) :
+    mk (l.inst ls) = inst (ls.map mk) (mk l) := by
+  apply Subtype.ext
+  funext ns
+  rw [congrFun (mk_val (VLevel.WF.inst hls)) ns]
+  simp only [VLevel.eval_inst]
+  change l.eval (ls.map (VLevel.eval ns)) = (mk l).1 ((ls.map mk).map fun u => u.1 ns)
+  rw [congrFun (mk_val hl) _]
+  congr 1
+  simp only [List.map_map]
+  apply List.map_congr_left
+  intro u hu
+  exact (congrFun (mk_val (hls u hu)) ns).symm
+
+theorem map_mk_eq (hls : ∀ l ∈ ls, l.WF univs) (hls' : ∀ l ∈ ls', l.WF univs)
+    (h : List.Forall₂ (fun l l' => l ≈ l') ls ls') :
+    ls.map mk = ls'.map mk := by
+  induction h with
+  | nil => rfl
+  | cons h _ ih =>
+    simp only [List.map_cons]
+    rw [mk_eq (hls _ (by simp)) (hls' _ (by simp)) h,
+      ih (fun _ hu => hls _ (by simp [hu])) (fun _ hu => hls' _ (by simp [hu]))]
+
+theorem map_mk_inj (hls : ∀ l ∈ ls, l.WF univs) (hls' : ∀ l ∈ ls', l.WF univs)
+    (h : ls.map mk = ls'.map mk) : List.Forall₂ (· ≈ ·) ls ls' := by
+  induction ls generalizing ls' with
+  | nil => cases ls' with | nil => exact .nil | cons => cases h
+  | cons l ls ih =>
+    cases ls' with
+    | nil => cases h
+    | cons l' ls' =>
+      simp only [List.map_cons, List.cons.injEq] at h
+      exact .cons (mk_inj (hls _ (by simp)) (hls' _ (by simp)) h.1)
+        (ih (fun _ hu => hls _ (by simp [hu])) (fun _ hu => hls' _ (by simp [hu])) h.2)
+
+/-- Every semantic level is the image of a well-formed syntactic level. -/
+theorem exists_mk (u : SLevel) : ∃ l : VLevel, l.WF univs ∧ mk l = u :=
+  let ⟨l, h1, h2⟩ := u.2; ⟨l, h1, by rw [mk_of_wf h1]; exact Subtype.ext h2⟩
+
+theorem exists_map_mk : ∀ ls : List SLevel,
+    ∃ vs : List VLevel, (∀ l ∈ vs, l.WF univs) ∧ vs.map mk = ls
+  | [] => ⟨[], nofun, rfl⟩
+  | u :: ls =>
+    let ⟨l, h1, h2⟩ := exists_mk u
+    let ⟨vs, h3, h4⟩ := exists_map_mk ls
+    ⟨l :: vs, List.forall_mem_cons.2 ⟨h1, h3⟩, by simp [h2, h4]⟩
 
 end SLevel
 
@@ -156,6 +890,90 @@ def mk : VExpr → SExpr
   | .app fn arg => .app (.mk fn) (.mk arg)
   | .lam ty body => .lam (.mk ty) (.mk body)
   | .forallE ty body => .forallE (.mk ty) (.mk body)
+
+/-- Translate an expression while instantiating its universe parameters. -/
+def mkInst (ls : List SLevel) : VExpr → SExpr
+  | .bvar i => .bvar i
+  | .sort u => .sort (.instV ls u)
+  | .const c us => .const c (us.map (.instV ls))
+  | .app fn arg => .app (mkInst ls fn) (mkInst ls arg)
+  | .lam ty body => .lam (mkInst ls ty) (mkInst ls body)
+  | .forallE ty body => .forallE (mkInst ls ty) (mkInst ls body)
+
+@[simp] theorem mkInst_lift' : mkInst ls (e.lift' ρ) = (mkInst ls e).lift' ρ := by
+  induction e generalizing ρ <;> simp [VExpr.lift', mkInst, *]
+
+theorem _root_.Lean4Lean.VExpr.ClosedN.mkInstS : ∀ {e : VExpr},
+    e.ClosedN k → (mkInst ls e).ClosedN k
+  | .bvar .., h | .sort .., h | .const .., h => h
+  | .app .., h | .lam .., h | .forallE .., h => ⟨h.1.mkInstS, h.2.mkInstS⟩
+
+theorem mkInst_map_mk (hls : ∀ u ∈ ls, u.WF univs) :
+    mkInst (ls.map SLevel.mk) e = mk (e.instL ls) := by
+  induction e with
+  | bvar => rfl
+  | sort u => exact congrArg SExpr.sort (SLevel.instV_map_mk hls)
+  | const c us =>
+    simp only [mkInst, VExpr.instL, mk, List.map_map]
+    congr 1
+    apply List.map_congr_left
+    intro u hu
+    exact SLevel.instV_map_mk hls
+  | app f a ihf iha | lam f a ihf iha | forallE f a ihf iha =>
+    simp only [mkInst, VExpr.instL, mk]
+    rw [ihf, iha]
+
+@[simp] theorem mk_lift' : ∀ {e : VExpr}, mk (e.lift' ρ) = (mk e).lift' ρ
+  | .bvar .. | .sort .. | .const .. => rfl
+  | .app .. | .lam .. | .forallE .. => by simp [VExpr.lift', mk, mk_lift']
+
+@[simp] theorem mk_lift {e : VExpr} : mk e.lift = (mk e).lift := by
+  rw [VExpr.lift_eq_lift']
+  exact mk_lift'
+
+theorem mk_instL {e : VExpr} {ls : List VLevel}
+    (he : e.LevelWF univs) (hls : ∀ u ∈ ls, u.WF univs) :
+    mk (e.instL ls) = (mk e).instL (ls.map SLevel.mk) := by
+  induction e with
+  | bvar => rfl
+  | app f a ihf iha | lam f a ihf iha | forallE f a ihf iha =>
+    simp [VExpr.LevelWF] at he
+    simp only [VExpr.instL, SExpr.mk, SExpr.instL]
+    rw [ihf he.1, iha he.2]
+  | sort u =>
+    simp only [VExpr.instL, SExpr.mk, SExpr.instL]
+    exact congrArg SExpr.sort (SLevel.mk_inst he hls)
+  | const c us =>
+    simp [VExpr.LevelWF] at he
+    simp only [VExpr.instL, mk, instL, List.map_map]
+    congr 1
+    apply List.map_congr_left
+    intro u hu
+    exact SLevel.mk_inst (he u hu) hls
+
+/-- Every `SExpr` is the image of a level-well-formed `VExpr`. -/
+theorem exists_mk : ∀ e : SExpr, ∃ e' : VExpr, e'.LevelWF univs ∧ mk e' = e
+  | .bvar i => ⟨.bvar i, ⟨⟩, rfl⟩
+  | .sort u => let ⟨l, h1, h2⟩ := SLevel.exists_mk u; ⟨.sort l, h1, by simp [mk, h2]⟩
+  | .const c ls =>
+    let ⟨vs, h1, h2⟩ := SLevel.exists_map_mk ls; ⟨.const c vs, h1, by simp [mk, h2]⟩
+  | .app f a =>
+    let ⟨f', hf1, hf2⟩ := exists_mk f; let ⟨a', ha1, ha2⟩ := exists_mk a
+    ⟨.app f' a', ⟨hf1, ha1⟩, by simp [mk, hf2, ha2]⟩
+  | .lam A b =>
+    let ⟨A', hA1, hA2⟩ := exists_mk A; let ⟨b', hb1, hb2⟩ := exists_mk b
+    ⟨.lam A' b', ⟨hA1, hb1⟩, by simp [mk, hA2, hb2]⟩
+  | .forallE A B =>
+    let ⟨A', hA1, hA2⟩ := exists_mk A; let ⟨B', hB1, hB2⟩ := exists_mk B
+    ⟨.forallE A' B', ⟨hA1, hB1⟩, by simp [mk, hA2, hB2]⟩
+
+/-- Every `SExpr` context is the image of a level-well-formed `VExpr` context. -/
+theorem exists_map_mk : ∀ Γ : List SExpr,
+    ∃ Γ' : List VExpr, OnCtx Γ' (fun _ A => A.LevelWF univs) ∧ Γ'.map mk = Γ
+  | [] => ⟨[], ⟨⟩, rfl⟩
+  | A :: Γ =>
+    let ⟨A', h1, h2⟩ := exists_mk A; let ⟨Γ', h3, h4⟩ := exists_map_mk Γ
+    ⟨A' :: Γ', ⟨h3, h1⟩, by simp [h2, h4]⟩
 
 theorem _root_.Lean4Lean.VExpr.ClosedN.mkS : ∀ {e : VExpr}, e.ClosedN k → ClosedN (.mk e) k
   | .bvar .., h | .sort .., h | .const .., h => h
@@ -256,6 +1074,22 @@ def subst : SExpr → Subst → SExpr
   | .lam ty body, σ => .lam (ty.subst σ) (body.subst σ.lift)
   | .forallE ty body, σ => .forallE (ty.subst σ) (body.subst σ.lift)
 
+def mkSubst (σ : VExpr.Subst) : Subst := fun i => mk (σ i)
+
+@[simp] theorem mkSubst_lift : mkSubst σ.lift = (mkSubst σ).lift := by
+  funext i
+  cases i with
+  | zero => rfl
+  | succ i => exact mk_lift
+
+@[simp] theorem mk_subst : mk (e.subst σ) = (mk e).subst (mkSubst σ) := by
+  induction e generalizing σ with
+  | bvar => rfl
+  | sort | const => rfl
+  | app f a ihf iha => simp only [VExpr.subst, mk, subst, ihf, iha]
+  | lam A e ihA ihe | forallE A e ihA ihe =>
+    simp only [VExpr.subst, mk, subst, ihA, ihe, mkSubst_lift]
+
 @[simp] theorem id_lift : Subst.id.lift = Subst.id := by funext i; cases i <;> rfl
 
 @[simp] theorem subst_id {e : SExpr} : e.subst .id = e := by
@@ -324,6 +1158,13 @@ theorem ClosedN.subst_eq {e : SExpr} (self : ClosedN e k) (h : σ.Fixes k) : e.s
   | lam _ _ ih1 ih2 | forallE _ _ ih1 ih2 => exact ⟨ih1 self.1 h, ih2 self.2 h.lift⟩
 
 def inst (e a : SExpr) : SExpr := e.subst (.one a)
+
+@[simp] theorem mkSubst_one : mkSubst (VExpr.Subst.one a) = Subst.one (mk a) := by
+  funext i
+  cases i <;> rfl
+
+@[simp] theorem mk_instExpr : mk (e.inst a) = (mk e).inst (mk a) := by
+  rw [VExpr.inst_eq, inst, mk_subst, mkSubst_one]
 
 def Skips (e : SExpr) (ρ : Lift) : Prop := lift' (e.subst ρ.invS) ρ = e
 
@@ -516,7 +1357,7 @@ inductive _root_.Lean4Lean.Pattern.MatchesS :
 
 def _root_.Lean4Lean.Pattern.RHS.applyS {p : Pattern}
     (m1 : List SLevel) (m2 : p.Path → SExpr) : p.RHS → SExpr
-  | .fixed c _ => .instL m1 (.mk c)
+  | .fixed c _ => .mkInst m1 c
   | .var path => m2 path
   | .app f a => .app (f.applyS m1 m2) (a.applyS m1 m2)
 
@@ -527,7 +1368,7 @@ def _root_.Lean4Lean.Pattern.RHS.Closed {p : Pattern} : p.RHS → Prop
 
 theorem _root_.Lean4Lean.Pattern.RHS.Closed.applyS {p : Pattern} {m1 m2} :
     ∀ r : p.RHS, r.Closed → (∀ a, (m2 a).ClosedN k) → (r.applyS m1 m2).ClosedN k
-  | .fixed .., h1, _ => h1.mkS.instL.mono (Nat.zero_le _)
+  | .fixed .., h1, _ => h1.mkInstS.mono (Nat.zero_le _)
   | .var _, _, h2 => h2 _
   | .app .., h1, h2 => ⟨h1.1.applyS _ h2, h1.2.applyS _ h2⟩
 
@@ -542,6 +1383,11 @@ set_option hygiene false
 inductive Lookup : List SExpr → Nat → SExpr → Prop where
   | zero : Lookup (ty::Γ) 0 ty.lift
   | succ : Lookup Γ n ty → Lookup (A::Γ) (n+1) ty.lift
+
+theorem Lookup.mkS (H : Lean4Lean.Lookup Γ i A) : Lookup (Γ.map mk) i (mk A) := by
+  induction H with
+  | zero => rw [mk_lift]; exact .zero
+  | succ _ ih => rw [mk_lift]; exact .succ ih
 
 theorem Lookup.weak' (W : Ctx.Lift' ρ Γ Γ') (H : Lookup Γ i A) :
     Lookup Γ' (ρ.liftVar i) (A.lift' ρ) := by
@@ -595,7 +1441,7 @@ inductive IsDefEq : List SExpr → SExpr → SExpr → SExpr → Prop where
   | trans' : Γ ⊢ A ≡ B : .sort u → Γ ⊢ B ≡ C : .sort v → Γ ⊢ A ≡ C : .sort u
   | sort : Γ ⊢ .sort l : .sort (.succ l)
   | const : env.constants c = some ci → ls.length = ci.uvars →
-    Γ ⊢ .const c ls : (SExpr.mk ci.type).instL ls
+    Γ ⊢ .const c ls : SExpr.mkInst ls ci.type
   | appDF : Γ ⊢ f ≡ f' : .forallE A B → Γ ⊢ a ≡ a' : A →
     Γ ⊢ .app f a ≡ .app f' a' : B.inst a
   | lamDF : Γ ⊢ A ≡ A' : .sort u → A::Γ ⊢ body ≡ body' : B →
@@ -609,13 +1455,109 @@ inductive IsDefEq : List SExpr → SExpr → SExpr → SExpr → Prop where
   -- | extra : Pat p r → p.MatchesS e m1 m2 → (dfs : List _).map (·.2) = r.2.defeqsS m1 m2 →
   --   (∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) → Γ ⊢ e ≡ r.1.applyS m1 m2' : A
   | extra : env.defeqs df → ls.length = df.uvars →
-    Γ ⊢ .instL ls (.mk df.lhs) ≡ .instL ls (.mk df.rhs) : .instL ls (.mk df.type)
+    Γ ⊢ .mkInst ls df.lhs ≡ .mkInst ls df.rhs : .mkInst ls df.type
 
-axiom Params.extra_pat (Γ) : env.defeqs df → ls.length = df.uvars →
-  ∃ p r m1 m2 dfs, Pat p r ∧ p.MatchesS (.instL ls (.mk df.lhs)) m1 m2 ∧
-    (dfs : List _).map (·.2) = r.2.defeqsS m1 m2 ∧
-    (∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) ∧
-    .instL ls (.mk df.rhs) = r.1.applyS m1 m2
+/-- Translate the main typing judgment into the semantically quotiented syntax. -/
+theorem IsDefEq.mkS (H : Params.env.IsDefEq Params.univs Γ e₁ e₂ A) :
+    OnCtx Γ (fun _ A => A.LevelWF Params.univs) →
+    IsDefEq (Γ.map mk) (mk e₁) (mk e₂) (mk A) := by
+  intro hΓ
+  induction H with
+  | bvar h => exact .bvar (SExpr.Lookup.mkS h)
+  | symm _ ih => exact .symm (ih hΓ)
+  | trans _ _ ih₁ ih₂ => exact .trans (ih₁ hΓ) (ih₂ hΓ)
+  | @sortDF l l' Γ hl hl' h =>
+    change IsDefEq _ (.sort (SLevel.mk _)) (.sort (SLevel.mk _)) (.sort (SLevel.mk _))
+    have hu := SLevel.mk_eq hl hl' h
+    have hus : SLevel.mk l.succ = (SLevel.mk l').succ := by rw [SLevel.mk_succ hl, hu]
+    rw [hu, hus]
+    exact .sort
+  | @constDF c ci ls ls' Γ h₁ h₂ h₃ h₄ h₅ =>
+    change IsDefEq _ (.const c (ls.map SLevel.mk)) (.const c (ls'.map SLevel.mk))
+      (mk (ci.type.instL ls))
+    rw [← SLevel.map_mk_eq h₂ h₃ h₅, ← mkInst_map_mk h₂]
+    exact IsDefEq.const (ls := ls.map SLevel.mk) h₁ (by simpa using h₄)
+  | appDF _ _ ihf iha => simpa only [mk, mk_instExpr] using IsDefEq.appDF (ihf hΓ) (iha hΓ)
+  | lamDF hA _ ihA ihb =>
+    have hAwf := (hA.levelWF hΓ).1
+    exact .lamDF (ihA hΓ) (ihb ⟨hΓ, hAwf⟩)
+  | forallEDF hA hb ihA ihb =>
+    have hAwf := (hA.levelWF hΓ).1
+    have hu := (hA.levelWF hΓ).2.2
+    have hv := (hb.levelWF ⟨hΓ, hAwf⟩).2.2
+    simpa only [mk, SLevel.mk_imax hu hv] using IsDefEq.forallEDF (ihA hΓ) (ihb ⟨hΓ, hAwf⟩)
+  | defeqDF _ _ ihA ihe => exact .defeqDF (ihA hΓ) (ihe hΓ)
+  | beta _ he' ihe ihe' =>
+    have hAwf := (he'.levelWF hΓ).2.2
+    simpa only [mk, mk_instExpr] using IsDefEq.beta (ihe ⟨hΓ, hAwf⟩) (ihe' hΓ)
+  | eta _ ih => simpa only [mk, mk_lift] using IsDefEq.eta (ih hΓ)
+  | proofIrrel _ _ _ ihp ihh ihh' => exact .proofIrrel (ihp hΓ) (ihh hΓ) (ihh' hΓ)
+  | @extra df ls Γ h₁ h₂ h₃ =>
+    simpa only [mkInst_map_mk h₂] using
+      (IsDefEq.extra (Γ := Γ.map mk) (ls := ls.map SLevel.mk) h₁ (by simpa using h₃))
+
+/-- Translate an empty-context `VExpr` judgment into an arbitrary `SExpr` context. -/
+theorem IsDefEq.mkS0 (H : Params.env.IsDefEq Params.univs [] e₁ e₂ A) (Γ : List SExpr) :
+    IsDefEq Γ (mk e₁) (mk e₂) (mk A) :=
+  let ⟨_, hΓ', h⟩ := SExpr.exists_map_mk Γ
+  h ▸ IsDefEq.mkS (H.weak0 Params.henv) hΓ'
+
+/-- Constant types are well-formed types, in any context. -/
+theorem Params.const_wf (h : env.constants c = some ci) :
+    ∃ u, Γ ⊢ mkInst ls ci.type : .sort u := by
+  obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
+  have ⟨_, hu⟩ := Params.henv.constWF h
+  rw [mkInst_map_mk hvs]
+  exact ⟨_, IsDefEq.mkS0 (hu.instL hvs) Γ⟩
+
+/-- Defeq rules are well-typed: the type is a type and both sides inhabit it, in any context. -/
+theorem Params.defeq_wf (h : env.defeqs df) :
+    (∃ u, Γ ⊢ mkInst ls df.type : .sort u) ∧
+    Γ ⊢ mkInst ls df.lhs : mkInst ls df.type ∧ Γ ⊢ mkInst ls df.rhs : mkInst ls df.type := by
+  obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
+  have ⟨hl, hr⟩ := Params.henv.defEqWF h
+  have ⟨_, hu⟩ := hl.isType Params.henv (by trivial)
+  simp only [mkInst_map_mk hvs]
+  exact ⟨⟨_, IsDefEq.mkS0 (hu.instL hvs) Γ⟩,
+    IsDefEq.mkS0 (hl.instL hvs) Γ, IsDefEq.mkS0 (hr.instL hvs) Γ⟩
+
+/-! ### Translating the pattern theory along `mk` -/
+
+theorem _root_.Lean4Lean.Pattern.MatchesS.congr {p : Pattern} {e m1} {m2 m2' : p.Path → SExpr}
+    (H : p.MatchesS e m1 m2) (h : ∀ x, m2 x = m2' x) : p.MatchesS e m1 m2' := funext h ▸ H
+
+theorem _root_.Lean4Lean.Pattern.Matches.mkS {p : Pattern} {e : VExpr} {m1 m2}
+    (H : p.Matches e m1 m2) : p.MatchesS (mk e) (m1.map SLevel.mk) (fun x => mk (m2 x)) := by
+  induction H with
+  | const => exact Pattern.MatchesS.congr .const nofun
+  | var _ ih => exact ih.var.congr fun | none => rfl | some _ => rfl
+  | app _ _ ih1 ih2 => exact (ih1.app ih2).congr fun | .inl _ => rfl | .inr _ => rfl
+
+theorem _root_.Lean4Lean.Pattern.RHS.mkS_apply {p : Pattern} {m1 : List VLevel}
+    {m2 : p.Path → VExpr} (hm1 : ∀ u ∈ m1, u.WF univs) :
+    ∀ r : p.RHS, mk (r.apply m1 m2) = r.applyS (m1.map SLevel.mk) (fun x => mk (m2 x))
+  | .fixed _ _ => (mkInst_map_mk hm1).symm
+  | .var _ => rfl
+  | .app f a => by
+    simp only [Pattern.RHS.apply, Pattern.RHS.applyS, mk, mkS_apply hm1 f, mkS_apply hm1 a]
+
+/-- Side conditions that hold as `VExpr` defeqs translate to a list of `SExpr` defeqs. -/
+theorem _root_.Lean4Lean.Pattern.Check.OK.mkS {p : Pattern} {Γ : List VExpr} {m1 m2}
+    (hΓ : OnCtx Γ fun _ A => A.LevelWF univs) (hm1 : ∀ u ∈ m1, u.WF univs) :
+    ∀ {ck : p.Check}, ck.OK (env.IsDefEqU univs Γ) m1 m2 →
+    ∃ dfs : List (SExpr × SExpr × SExpr),
+      dfs.map (·.2) = ck.defeqsS (m1.map SLevel.mk) (fun x => mk (m2 x)) ∧
+      ∀ a b A, (A, a, b) ∈ dfs → IsDefEq (Γ.map mk) a b A
+  | .true, _ => ⟨[], rfl, nofun⟩
+  | .defeq a b rest, ⟨⟨A, h⟩, hrest⟩ =>
+    let ⟨dfs, h1, h2⟩ := Pattern.Check.OK.mkS hΓ hm1 hrest
+    ⟨(mk A, mk (a.apply m1 m2), mk (b.apply m1 m2)) :: dfs,
+      by simp only [List.map_cons, Pattern.Check.defeqsS, h1, Pattern.RHS.mkS_apply hm1],
+      by
+        intro a' b' A' h'
+        rcases List.mem_cons.1 h' with h' | h'
+        · cases h'; exact IsDefEq.mkS h hΓ
+        · exact h2 _ _ _ h'⟩
 
 def CtorBundle.IsCtor (c : Name) : Prop :=
   ∃ cl, Params.classify c = some cl ∧ cl matches .ctor .. | .etaCtor ..
@@ -639,8 +1581,11 @@ def CtorBundle.rhs (H : CtorBundle c cl) (ls : List SLevel) : SExpr :=
   H.Ts.foldr .forallE (H.args.foldr (fun A acc => acc.app A) (.const H.I ls))
 
 section
+variable (E : VEnv)
 local notation:65 (priority := high) Γ " ⊢ " e1 " : " A:36 => IsDefEqStrong Γ e1 e1 A
 local notation:65 (priority := high) Γ " ⊢ " e1 " ≡ " e2 " : " A:36 => IsDefEqStrong Γ e1 e2 A
+/-- The strong judgment, drawing its constants and rules from the environment `E`
+(`IsDefEqStrong Params.env` is the judgment `⊢ₛ` of the rest of this file). -/
 inductive IsDefEqStrong : List SExpr → SExpr → SExpr → SExpr → Prop where
   | bvar : Lookup Γ i A → Γ ⊢ A : .sort u → Γ ⊢ .bvar i : A
   | symm : Γ ⊢ e ≡ e' : A → Γ ⊢ e' ≡ e : A
@@ -648,12 +1593,12 @@ inductive IsDefEqStrong : List SExpr → SExpr → SExpr → SExpr → Prop wher
   /-- Heterogeneous transitivity: middle term may be at a different sort. -/
   | trans' : Γ ⊢ A ≡ B : .sort u → Γ ⊢ B ≡ C : .sort v → Γ ⊢ A ≡ C : .sort u
   | sort : Γ ⊢ .sort l : .sort (.succ l)
-  | const : env.constants c = some ci → ls.length = ci.uvars →
-    Γ ⊢ (SExpr.mk ci.type).instL ls : .sort u →
+  | const : E.constants c = some ci → ls.length = ci.uvars →
+    Γ ⊢ SExpr.mkInst ls ci.type : .sort u →
     (F : ∀ cl, CtorBundle c cl) →
-    (∀ cl, Γ ⊢ (SExpr.mk ci.type).instL ls ≡ (F cl).rhs ls : .sort (F cl).u) →
-    Γ ⊢ .const c ls : (SExpr.mk ci.type).instL ls
-  | appDF : Γ ⊢ A : .sort u →
+    (∀ cl, Γ ⊢ SExpr.mkInst ls ci.type ≡ (F cl).rhs ls : .sort (F cl).u) →
+    Γ ⊢ .const c ls : SExpr.mkInst ls ci.type
+  | appDF : Γ ⊢ A : .sort u → A::Γ ⊢ B : .sort v →
     Γ ⊢ f ≡ f' : .forallE A B → Γ ⊢ a ≡ a' : A →
     Γ ⊢ B.inst a ≡ B.inst a' : .sort v →
     Γ ⊢ .app f a ≡ .app f' a' : B.inst a
@@ -670,22 +1615,161 @@ inductive IsDefEqStrong : List SExpr → SExpr → SExpr → SExpr → Prop wher
   | eta : Γ ⊢ e : .forallE A B → Γ ⊢ .lam A (.app e.lift (.bvar 0)) : .forallE A B →
     Γ ⊢ .lam A (.app e.lift (.bvar 0)) ≡ e : .forallE A B
   | proofIrrel : Γ ⊢ p : .sort .zero → Γ ⊢ h : p → Γ ⊢ h' : p → Γ ⊢ h ≡ h' : p
-  | extra : env.defeqs df → ls.length = df.uvars →
-    Γ ⊢ .instL ls (.mk df.lhs) : .instL ls (.mk df.type) →
-    Γ ⊢ .instL ls (.mk df.rhs) : .instL ls (.mk df.type) →
-    Γ ⊢ .instL ls (.mk df.lhs) ≡ .instL ls (.mk df.rhs) : .instL ls (.mk df.type)
+  | extra : E.defeqs df → ls.length = df.uvars →
+    Γ ⊢ .mkInst ls df.lhs : .mkInst ls df.type →
+    Γ ⊢ .mkInst ls df.rhs : .mkInst ls df.type →
+    Γ ⊢ .mkInst ls df.lhs ≡ .mkInst ls df.rhs : .mkInst ls df.type
 end
 
-theorem IsDefEq.strong : Γ ⊢ e1 ≡ e2 : A → IsDefEqStrong Γ e1 e2 A := sorry
-theorem IsDefEqStrong.defeq : IsDefEqStrong Γ e1 e2 A → Γ ⊢ e1 ≡ e2 : A := sorry
+theorem IsDefEqStrong.defeq : IsDefEqStrong Params.env Γ e1 e2 A → Γ ⊢ e1 ≡ e2 : A := by
+  intro h
+  induction h with
+  | bvar h _ _ => exact .bvar h
+  | symm _ ih => exact .symm ih
+  | trans _ _ _ _ ih1 ih2 => exact .trans ih1 ih2
+  | trans' _ _ ih1 ih2 => exact .trans' ih1 ih2
+  | sort => exact .sort
+  | const h1 h2 _ _ _ _ _ => exact .const h1 h2
+  | appDF _ _ _ _ _ _ _ ihf iha _ => exact .appDF ihf iha
+  | lamDF _ _ _ _ ihA _ ihb _ => exact .lamDF ihA ihb
+  | forallEDF _ _ _ ihA ihb _ => exact .forallEDF ihA ihb
+  | defeqDF _ _ ih1 ih2 => exact .defeqDF ih1 ih2
+  | beta _ _ _ _ ih1 ih2 _ _ => exact .beta ih1 ih2
+  | eta _ _ ih _ => exact .eta ih
+  | proofIrrel _ _ _ ih1 ih2 ih3 => exact .proofIrrel ih1 ih2 ih3
+  | extra h1 h2 _ _ _ _ => exact .extra h1 h2
 
+theorem IsDefEqStrong.mono {E E' : VEnv} (h : E ≤ E') :
+    IsDefEqStrong E Γ e1 e2 A → IsDefEqStrong E' Γ e1 e2 A := by
+  intro H
+  induction H with
+  | bvar h _ ih => exact .bvar h ih
+  | symm _ ih => exact .symm ih
+  | trans _ _ _ ih1 ih2 ih3 => exact .trans ih1 ih2 ih3
+  | trans' _ _ ih1 ih2 => exact .trans' ih1 ih2
+  | sort => exact .sort
+  | const h1 h2 _ F _ ih3 ih5 => exact .const (h.1 h1) h2 ih3 F ih5
+  | appDF _ _ _ _ _ ih1 ih2 ih3 ih4 ih5 => exact .appDF ih1 ih2 ih3 ih4 ih5
+  | lamDF _ _ _ _ ih1 ih2 ih3 ih4 => exact .lamDF ih1 ih2 ih3 ih4
+  | forallEDF _ _ _ ih1 ih2 ih3 => exact .forallEDF ih1 ih2 ih3
+  | defeqDF _ _ ih1 ih2 => exact .defeqDF ih1 ih2
+  | beta _ _ _ _ ih1 ih2 ih3 ih4 => exact .beta ih1 ih2 ih3 ih4
+  | eta _ _ ih1 ih2 => exact .eta ih1 ih2
+  | proofIrrel _ _ _ ih1 ih2 ih3 => exact .proofIrrel ih1 ih2 ih3
+  | extra h1 h2 _ _ ih1 ih2 => exact .extra (h.2 h1) h2 ih1 ih2
+
+theorem IsDefEqStrong.defeqE {E : VEnv} (hE : E ≤ Params.env) (H : IsDefEqStrong E Γ e1 e2 A) :
+    Γ ⊢ e1 ≡ e2 : A :=
+  (H.mono hE).defeq
+
+/-- Every strong derivation lives in some rank prefix of the environment
+(take the max over the derivation). -/
+theorem IsDefEqStrong.exists_below (rank : Name → Nat) :
+    IsDefEqStrong Params.env Γ e1 e2 A → ∃ k, IsDefEqStrong (Params.env.below rank k) Γ e1 e2 A := by
+  intro H
+  induction H with
+  | bvar h _ ih => let ⟨k, ih⟩ := ih; exact ⟨k, .bvar h ih⟩
+  | symm _ ih => let ⟨k, ih⟩ := ih; exact ⟨k, .symm ih⟩
+  | trans _ _ _ ih1 ih2 ih3 =>
+    obtain ⟨⟨k1, ih1⟩, ⟨k2, ih2⟩, ⟨k3, ih3⟩⟩ := And.intro ih1 (And.intro ih2 ih3)
+    refine ⟨max k1 (max k2 k3), .trans (ih1.mono (Params.env.below_mono rank ?_))
+      (ih2.mono (Params.env.below_mono rank ?_)) (ih3.mono (Params.env.below_mono rank ?_))⟩ <;> omega
+  | trans' _ _ ih1 ih2 =>
+    obtain ⟨⟨k1, ih1⟩, ⟨k2, ih2⟩⟩ := And.intro ih1 ih2
+    refine ⟨max k1 k2, .trans' (ih1.mono (Params.env.below_mono rank ?_))
+      (ih2.mono (Params.env.below_mono rank ?_))⟩ <;> omega
+  | sort => exact ⟨0, .sort⟩
+  | @const c ci Γ ls u h1 h2 _ F _ ih3 ih5 =>
+    -- `IsCtor c` is a `Prop`, so the ctor-bundle family has at most one member: one bound covers it
+    obtain ⟨k3, ih3⟩ := ih3
+    by_cases hc : CtorBundle.IsCtor c
+    · obtain ⟨k5, ih5⟩ := ih5 hc
+      refine ⟨max (max k3 k5) (rank c + 1), .const (VEnv.below_constants_of_lt (by omega) h1) h2
+        (ih3.mono (Params.env.below_mono rank ?_)) F
+        fun cl => (ih5.mono (Params.env.below_mono rank ?_))⟩ <;> omega
+    · refine ⟨max k3 (rank c + 1), .const (VEnv.below_constants_of_lt (by omega) h1) h2
+        (ih3.mono (Params.env.below_mono rank ?_)) F fun cl => (hc cl).elim⟩
+      omega
+  | appDF _ _ _ _ _ ih1 ih2 ih3 ih4 ih5 =>
+    obtain ⟨⟨k1, ih1⟩, ⟨k2, ih2⟩, ⟨k3, ih3⟩, ⟨k4, ih4⟩, ⟨k5, ih5⟩⟩ :=
+      And.intro ih1 (And.intro ih2 (And.intro ih3 (And.intro ih4 ih5)))
+    refine ⟨max (max k1 k2) (max k3 (max k4 k5)),
+      .appDF (ih1.mono (Params.env.below_mono rank ?_)) (ih2.mono (Params.env.below_mono rank ?_))
+        (ih3.mono (Params.env.below_mono rank ?_)) (ih4.mono (Params.env.below_mono rank ?_))
+        (ih5.mono (Params.env.below_mono rank ?_))⟩ <;> omega
+  | lamDF _ _ _ _ ih1 ih2 ih3 ih4 =>
+    obtain ⟨⟨k1, ih1⟩, ⟨k2, ih2⟩, ⟨k3, ih3⟩, ⟨k4, ih4⟩⟩ :=
+      And.intro ih1 (And.intro ih2 (And.intro ih3 ih4))
+    refine ⟨max (max k1 k2) (max k3 k4),
+      .lamDF (ih1.mono (Params.env.below_mono rank ?_)) (ih2.mono (Params.env.below_mono rank ?_))
+        (ih3.mono (Params.env.below_mono rank ?_)) (ih4.mono (Params.env.below_mono rank ?_))⟩ <;> omega
+  | forallEDF _ _ _ ih1 ih2 ih3 =>
+    obtain ⟨⟨k1, ih1⟩, ⟨k2, ih2⟩, ⟨k3, ih3⟩⟩ := And.intro ih1 (And.intro ih2 ih3)
+    refine ⟨max k1 (max k2 k3), .forallEDF (ih1.mono (Params.env.below_mono rank ?_))
+      (ih2.mono (Params.env.below_mono rank ?_)) (ih3.mono (Params.env.below_mono rank ?_))⟩ <;> omega
+  | defeqDF _ _ ih1 ih2 =>
+    obtain ⟨⟨k1, ih1⟩, ⟨k2, ih2⟩⟩ := And.intro ih1 ih2
+    refine ⟨max k1 k2, .defeqDF (ih1.mono (Params.env.below_mono rank ?_))
+      (ih2.mono (Params.env.below_mono rank ?_))⟩ <;> omega
+  | beta _ _ _ _ ih1 ih2 ih3 ih4 =>
+    obtain ⟨⟨k1, ih1⟩, ⟨k2, ih2⟩, ⟨k3, ih3⟩, ⟨k4, ih4⟩⟩ :=
+      And.intro ih1 (And.intro ih2 (And.intro ih3 ih4))
+    refine ⟨max (max k1 k2) (max k3 k4),
+      .beta (ih1.mono (Params.env.below_mono rank ?_)) (ih2.mono (Params.env.below_mono rank ?_))
+        (ih3.mono (Params.env.below_mono rank ?_)) (ih4.mono (Params.env.below_mono rank ?_))⟩ <;> omega
+  | eta _ _ ih1 ih2 =>
+    obtain ⟨⟨k1, ih1⟩, ⟨k2, ih2⟩⟩ := And.intro ih1 ih2
+    refine ⟨max k1 k2, .eta (ih1.mono (Params.env.below_mono rank ?_))
+      (ih2.mono (Params.env.below_mono rank ?_))⟩ <;> omega
+  | proofIrrel _ _ _ ih1 ih2 ih3 =>
+    obtain ⟨⟨k1, ih1⟩, ⟨k2, ih2⟩, ⟨k3, ih3⟩⟩ := And.intro ih1 (And.intro ih2 ih3)
+    refine ⟨max k1 (max k2 k3), .proofIrrel (ih1.mono (Params.env.below_mono rank ?_))
+      (ih2.mono (Params.env.below_mono rank ?_)) (ih3.mono (Params.env.below_mono rank ?_))⟩ <;> omega
+  | @extra df ls Γ h1 h2 _ _ ih1 ih2 =>
+    obtain ⟨⟨k1, ih1⟩, ⟨k2, ih2⟩⟩ := And.intro ih1 ih2
+    let kd := max (df.lhs.rankBound rank) (max (df.rhs.rankBound rank) (df.type.rankBound rank))
+    refine ⟨max (max k1 k2) kd, .extra ⟨h1, ?_, ?_, ?_⟩ h2 (ih1.mono (Params.env.below_mono rank ?_))
+      (ih2.mono (Params.env.below_mono rank ?_))⟩
+    · exact (df.lhs.onConsts_rankBound rank).mono_k (by omega)
+    · exact (df.rhs.onConsts_rankBound rank).mono_k (by omega)
+    · exact (df.type.onConsts_rankBound rank).mono_k (by omega)
+    all_goals omega
+
+theorem mk_instL_foldr_forallE (Ts : List VExpr) (X : VExpr) :
+    mk ((Ts.foldr .forallE X).instL vs) =
+      (Ts.map fun T => mk (T.instL vs)).foldr .forallE (mk (X.instL vs)) := by
+  induction Ts with
+  | nil => rfl
+  | cons T Ts ih => simp only [List.foldr_cons, List.map_cons, VExpr.instL, mk, ih]
+
+theorem mk_instL_foldr_app (args : List VExpr) (X : VExpr) :
+    mk ((args.foldr (fun A acc => acc.app A) X).instL vs) =
+      (args.map fun A => mk (A.instL vs)).foldr (fun A acc => acc.app A) (mk (X.instL vs)) := by
+  induction args with
+  | nil => rfl
+  | cons A args ih => simp only [List.foldr_cons, List.map_cons, VExpr.instL, mk, ih]
+
+/-- The `SExpr` form of `Params.ctor_tyV`, at any level list and in any context. -/
 theorem _root_.Lean4Lean.Params.ctor_ty
-    (hcl1 : Params.classify c = some cl) (hcl2 : cl matches .ctor .. | .etaCtor ..)
+    (hctor : cl matches .ctor .. | .etaCtor ..) (hcl : Params.classify c = some cl)
     (hci : env.constants c = some ci) (h_len : ls.length = ci.uvars) :
     ∃ (I : Name) (Ts args : List SExpr) (u : SLevel),
       Ts.length = cl.arity ∧ Params.classify I = some (.indTy args.length) ∧ u ≠ .zero ∧
-      Γ ⊢ (SExpr.mk ci.type).instL ls ≡
-        Ts.foldr .forallE (args.foldr (fun A acc => acc.app A) (.const I ls)) : .sort u := sorry
+      Γ ⊢ SExpr.mkInst ls ci.type ≡
+        Ts.foldr .forallE (args.foldr (fun A acc => acc.app A) (.const I ls)) : .sort u := by
+  obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
+  obtain ⟨I, Ts, args, u, hTs, hI, hu, H⟩ := Params.ctor_tyV hctor hcl hci
+  have hlen : vs.length = ci.uvars := by simpa using h_len
+  refine ⟨I, Ts.map fun T => mk (T.instL vs), args.map fun A => mk (A.instL vs),
+    .mk (u.inst vs), by simp [hTs], by simpa using hI, fun h => ?_, ?_⟩
+  · rw [SLevel.mk_of_wf (VLevel.WF.inst hvs)] at h
+    have := congrFun (congrArg Subtype.val h) []
+    simp only [VLevel.eval_inst, SLevel.zero, VLevel.eval] at this
+    exact hu _ this
+  · have := IsDefEq.mkS0 (H.instL hvs) Γ
+    rw [mk_instL_foldr_forallE, mk_instL_foldr_app] at this
+    rw [mkInst_map_mk hvs]
+    simpa only [VExpr.instL, mk, VLevel.inst_map_id hlen] using this
 
 theorem IsDefEq.hasType (H : Γ ⊢ e1 ≡ e2 : A) :
     Γ ⊢ e1 ≡ e1 : A ∧ Γ ⊢ e2 ≡ e2 : A := ⟨H.trans H.symm, H.symm.trans H⟩
@@ -703,8 +1787,8 @@ inductive HasTypeStratifiedS : List SExpr → SExpr → SExpr → Bool → Nat �
   | const :
     env.constants c = some ci →
     ls.length = ci.uvars →
-    Γ ⊢ (mk ci.type).instL ls : .sort u !! n →
-    Γ ⊢ .const c ls :! (mk ci.type).instL ls !! n+1
+    Γ ⊢ mkInst ls ci.type : .sort u !! n →
+    Γ ⊢ .const c ls :! mkInst ls ci.type !! n+1
   | app :
     Γ ⊢ A : .sort u !! n →
     A::Γ ⊢ B : .sort v !! n →
@@ -742,6 +1826,77 @@ def Ctx.WF : List SExpr → Prop
   | A::Γ => WF Γ ∧ ∃ u, Γ ⊢ A : .sort u
 scoped notation:65 "⊢ " Γ:36 => Ctx.WF Γ
 
+theorem Ctx.WF.cons (hΓ : ⊢ Γ) (hA : Γ ⊢ A : .sort u) : ⊢ A :: Γ := ⟨hΓ, _, hA⟩
+
+/-! ### The `SExpr` form of `Params.extra_patV` (PLAN D5, R6) -/
+
+theorem mk_foldr_lam (L : VExpr) : ∀ Δ : List VExpr, mk (Δ.foldr .lam L) = (Δ.map mk).foldr .lam (mk L)
+  | [] => rfl
+  | A :: Δ => by simp only [List.foldr_cons, List.map_cons, mk, mk_foldr_lam L Δ]
+
+theorem mk_foldr_forallE (T : VExpr) :
+    ∀ Δ : List VExpr, mk (Δ.foldr .forallE T) = (Δ.map mk).foldr .forallE (mk T)
+  | [] => rfl
+  | A :: Δ => by simp only [List.foldr_cons, List.map_cons, mk, mk_foldr_forallE T Δ]
+
+/-- A well-typed `VExpr` telescope, appended to a level-well-formed context, is level-well-formed. -/
+theorem onCtx_append_levelWF : ∀ {Θ : List VExpr} {Γ : List VExpr},
+    OnCtx Θ (Params.env.IsType Params.univs) → OnCtx Γ (fun _ A => A.LevelWF Params.univs) →
+    OnCtx (Θ ++ Γ) (fun _ A => A.LevelWF Params.univs)
+  | [], _, _, hΓ => hΓ
+  | _ :: _, Γ, ⟨hΘ, _, hA⟩, hΓ =>
+    have ih := onCtx_append_levelWF hΘ hΓ
+    ⟨ih, ((hA.weakR Params.henv (VEnv.CtxWF.closed Params.henv hΘ) Γ).levelWF ih).1⟩
+
+/-- The `SExpr` image of a well-typed `VExpr` telescope over a well-formed context is well-formed. -/
+theorem ctxWF_append_mk : ∀ {Θ : List VExpr} {Γ : List VExpr},
+    OnCtx Θ (Params.env.IsType Params.univs) → OnCtx Γ (fun _ A => A.LevelWF Params.univs) →
+    ⊢ Γ.map mk → ⊢ (Θ ++ Γ).map mk
+  | [], _, _, _, h => h
+  | _ :: _, Γ, ⟨hΘ, _, hA⟩, hΓ, h =>
+    ⟨ctxWF_append_mk hΘ hΓ h, _, by
+      simpa [mk] using IsDefEq.mkS (hA.weakR Params.henv (VEnv.CtxWF.closed Params.henv hΘ) Γ)
+        (onCtx_append_levelWF hΘ hΓ)⟩
+
+/-- The `SExpr` form of `Params.extra_patV` (PLAN D5; R6, from E5's `T.extra_pat_lam`): every
+instantiated defeq rule is the λ-closure over a telescope `Δ` of an open equation `L ≡ R : T`,
+typed in `Δ.reverse ++ Γ` for any `SExpr` context `Γ` (whose well-formedness it preserves),
+whose left side is a pattern instance with side conditions holding in `Δ.reverse ++ Γ` and whose
+right side is the pattern's right-hand side. The former statement (before R6) was the last
+conjunct alone, at `Δ = []`: `∃ p r m1 m2 dfs, Pat p r ∧ p.MatchesS (.mkInst ls df.lhs) m1 m2 ∧
+dfs.map (·.2) = r.2.defeqsS m1 m2 ∧ (∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) ∧
+.mkInst ls df.rhs = r.1.applyS m1 m2`. -/
+theorem Params.extra_pat (Γ : List SExpr) {df : VDefEq} {ls : List SLevel}
+    (h1 : Params.env.defeqs df) (h2 : ls.length = df.uvars) :
+    ∃ (Δ : List SExpr) (L R T : SExpr),
+      .mkInst ls df.lhs = Δ.foldr .lam L ∧ .mkInst ls df.rhs = Δ.foldr .lam R ∧
+      .mkInst ls df.type = Δ.foldr .forallE T ∧
+      (⊢ Γ → ⊢ Δ.reverse ++ Γ) ∧
+      Δ.reverse ++ Γ ⊢ L ≡ R : T ∧
+      ∃ p r m1 m2 dfs, Params.Pat p r ∧ p.MatchesS L m1 m2 ∧
+        (dfs : List _).map (·.2) = r.2.defeqsS m1 m2 ∧
+        (∀ a b A, (A, a, b) ∈ dfs → Δ.reverse ++ Γ ⊢ a ≡ b : A) ∧
+        R = r.1.applyS m1 m2 := by
+  obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
+  obtain ⟨Γ', hΓ', rfl⟩ := SExpr.exists_map_mk Γ
+  obtain ⟨Δ, L, R, T, hl, hr, hT, hΔ, hLR, p, r, m1, m2, hp, hm, hok, hR⟩ :=
+    Params.extra_patV (Γ := Γ') h1 hvs (by simpa using h2)
+  have hctx := onCtx_append_levelWF hΔ hΓ'
+  have hΔlv := onCtx_append_levelWF (Γ := []) hΔ ⟨⟩
+  rw [List.append_nil] at hΔlv
+  have hmap : (Δ.map mk).reverse ++ Γ'.map mk = (Δ.reverse ++ Γ').map mk := by
+    simp [List.map_reverse]
+  have hm1 := hm.levelWF (hLR.levelWF hΔlv).1
+  obtain ⟨dfs, hdfs, hdefeq⟩ := hok.mkS hctx hm1
+  refine ⟨Δ.map mk, mk L, mk R, mk T, ?_, ?_, ?_, ?_, ?_, p, r, _, _, dfs, hp, hm.mkS, hdfs, ?_, ?_⟩
+  · rw [mkInst_map_mk hvs, hl, mk_foldr_lam]
+  · rw [mkInst_map_mk hvs, hr, mk_foldr_lam]
+  · rw [mkInst_map_mk hvs, hT, mk_foldr_forallE]
+  · rw [hmap]; exact ctxWF_append_mk hΔ hΓ'
+  · rw [hmap]; exact IsDefEq.mkS (hLR.weakR Params.henv (VEnv.CtxWF.closed Params.henv hΔ) Γ') hctx
+  · rw [hmap]; exact hdefeq
+  · rw [hR]; exact Pattern.RHS.mkS_apply hm1 _
+
 variable (HasType : List SExpr → SExpr → SExpr → Prop)
 inductive Ctx.Subst (Γ : List SExpr) : SExpr.Subst → List SExpr → Prop where
   | nil : Ctx.Subst Γ σ []
@@ -757,45 +1912,814 @@ theorem Ctx.Subst.tail (H : Ctx.Subst HasType Γ σ (A::Δ)) : Ctx.Subst HasType
 theorem Ctx.Subst.cons' (H1 : Ctx.Subst HasType Γ σ Δ) (H2 : HasType Γ e (A.subst σ)) :
     Ctx.Subst HasType Γ (σ.cons e) (A::Δ) := .cons H1 H2
 
-theorem Ctx.Subst.lift_r (H1 : Ctx.Subst HasType Θ σ Γ) (H2 : Ctx.Lift' ρ Θ Δ) :
-    Ctx.Subst HasType Δ (σ.lift_r ρ) Γ := sorry
+theorem Ctx.Subst.lift_r
+    (weak : ∀ {ρ Γ Δ e A}, Ctx.Lift' ρ Γ Δ → HasType Γ e A → HasType Δ (e.lift' ρ) (A.lift' ρ))
+    (H1 : Ctx.Subst HasType Θ σ Γ) (H2 : Ctx.Lift' ρ Θ Δ) :
+    Ctx.Subst HasType Δ (σ.lift_r ρ) Γ := by
+  induction H1 with
+  | nil => exact .nil
+  | cons _ h ih =>
+    refine .cons ih ?_
+    have := weak H2 h
+    rw [lift'_subst] at this; exact this
+
+theorem Subst.lift_tail_eq (σ : Subst) : σ.lift.tail = σ.lift_r (.skip .refl) := by
+  funext i; simp [SExpr.Subst.tail, SExpr.Subst.lift, SExpr.Subst.lift_r]
 
 theorem Ctx.Subst.lift (bvar : ∀ {Γ i A}, Lookup Γ i A → HasType Γ (bvar i) A)
+    (weak : ∀ {ρ Γ Δ e A}, Ctx.Lift' ρ Γ Δ → HasType Γ e A → HasType Δ (e.lift' ρ) (A.lift' ρ))
     (H : Ctx.Subst HasType Γ σ Δ) : Ctx.Subst HasType (A.subst σ :: Γ) σ.lift (A :: Δ) := by
-  have : σ.lift.tail = σ.lift_r (.skip .refl) := by
-    funext i; simp [SExpr.Subst.tail, SExpr.Subst.lift, SExpr.Subst.lift_r]
-  refine .cons (this ▸ .lift_r H .one) (this ▸ bvar ?_)
+  have : σ.lift.tail = σ.lift_r (.skip .refl) := Subst.lift_tail_eq σ
+  refine .cons (this ▸ .lift_r weak H .one) (this ▸ bvar ?_)
   rw [← lift'_subst, ← SExpr.lift]; exact .zero
 
-theorem Ctx.Subst.id : Ctx.Subst HasType Γ .id Γ := sorry
-theorem Ctx.Subst.one (H : HasType Γ e A) : Ctx.Subst HasType Γ (.one e) (A::Γ) :=
-  .cons .id (by simpa)
+theorem Subst.id_tail_eq : (SExpr.Subst.id).tail = SExpr.Subst.id.lift_r (.skip .refl) := by
+  funext i; rfl
 
-inductive Ctx.SubstEq (Γ₀ : List SExpr) : SExpr.Subst → SExpr.Subst → List SExpr → Prop where
-  | nil : Ctx.SubstEq Γ₀ .id .id Γ₀
-  | cons : Ctx.SubstEq Γ₀ σ.tail σ'.tail Γ →
-    Γ ⊢ A : .sort u →
-    Γ₀ ⊢ σ.head ≡ σ'.head : A.subst σ.tail →
-    Ctx.SubstEq Γ₀ σ σ' (A :: Γ)
+theorem Ctx.Subst.id (bvar : ∀ {Γ i A}, Lookup Γ i A → HasType Γ (bvar i) A)
+    (weak : ∀ {ρ Γ Δ e A}, Ctx.Lift' ρ Γ Δ → HasType Γ e A → HasType Δ (e.lift' ρ) (A.lift' ρ)) :
+    ∀ {Γ}, Ctx.Subst HasType Γ .id Γ
+  | [] => .nil
+  | A :: Γ => by
+    refine .cons (Subst.id_tail_eq ▸ .lift_r weak (Ctx.Subst.id bvar weak) .one) (bvar ?_)
+    show Lookup (A :: Γ) 0 (A.subst SExpr.Subst.id.tail)
+    rw [Subst.id_tail_eq, ← lift'_subst, subst_id]; exact .zero
 
-theorem Ctx.SubstEq.left (W : Ctx.SubstEq Γ₀ σ σ' Γ) : Ctx.Subst (· ⊢ · : ·) Γ₀ σ Γ := by
-  induction W with
-  | nil => exact .id
-  | cons _ _ h ih => exact .cons ih h.hasType.1
+theorem Ctx.Subst.one (bvar : ∀ {Γ i A}, Lookup Γ i A → HasType Γ (bvar i) A)
+    (weak : ∀ {ρ Γ Δ e A}, Ctx.Lift' ρ Γ Δ → HasType Γ e A → HasType Δ (e.lift' ρ) (A.lift' ρ))
+    (H : HasType Γ e A) : Ctx.Subst HasType Γ (.one e) (A::Γ) :=
+  .cons (.id bvar weak) (by simpa)
 
-theorem IsDefEq.subst (W : Ctx.SubstEq Γ₀ σ σ' Γ) :
-    Γ ⊢ e1 ≡ e2 : A → Γ₀ ⊢ e1.subst σ ≡ e2.subst σ' : A.subst σ := sorry
 
-theorem Ctx.SubstEq.symm (W : Ctx.SubstEq Γ₀ σ σ' Γ) : Ctx.SubstEq Γ₀ σ' σ Γ := by
+/-! ### Strong typing: every weak derivation in a well-formed context is strong -/
+/-! ## Small syntactic lemmas -/
+
+theorem lift'_sort {u : SLevel} {ρ : Lift} : (SExpr.sort u).lift' ρ = .sort u := rfl
+theorem subst_sort {u : SLevel} {σ : Subst} : (SExpr.sort u).subst σ = .sort u := rfl
+theorem lift'_const {ρ : Lift} : (SExpr.const c ls).lift' ρ = .const c ls := rfl
+theorem subst_const {σ : Subst} : (SExpr.const c ls).subst σ = .const c ls := rfl
+
+theorem Lookup.lt (H : Lookup Γ i A) : i < Γ.length := by
+  induction H with
+  | zero => exact Nat.succ_pos _
+  | succ _ ih => exact Nat.succ_lt_succ ih
+
+theorem Ctx.Lift'.nil : ∀ Γ : List SExpr, Ctx.Lift' (Lift.skipN .refl Γ.length) [] Γ
+  | [] => .refl
+  | _ :: Γ => .skip (nil Γ)
+
+theorem Subst.lift_r_tail {σ : Subst} {ρ : Lift} :
+    (σ.lift_r ρ).tail = σ.tail.lift_r ρ := rfl
+
+theorem lift_subst_lift {e : SExpr} {σ : Subst} : e.lift.subst σ.lift = (e.subst σ).lift := by
+  rw [lift_subst, Subst.lift_tail_eq, ← lift'_subst]
+
+theorem lift_cons_skip_inst_bvar0 {X : SExpr} :
+    (X.lift' (.cons (.skip .refl))).inst (.bvar 0) = X := by
+  have hsub : (Subst.lift_l (.cons (.skip .refl)) (Subst.one (.bvar 0))) = (Subst.id : Subst) := by
+    funext i; cases i <;> rfl
+  show (X.lift' (.cons (.skip .refl))).subst (.one (.bvar 0)) = X
+  rw [subst_lift', hsub, subst_id]
+
+/-- Closedness of the constant-type expression. This is the only place the
+expression `mkInst ls ci.type` is inspected. -/
+theorem constType_closed (h1 : env.constants c = some ci) :
+    ClosedN (mkInst ls ci.type) := (henv.closedC h1).mkInstS
+
+/-- Closedness of the defeq lhs/rhs/type expressions. -/
+theorem defeq_closed (h1 : env.defeqs df) :
+    ClosedN (.mkInst ls df.lhs) ∧ ClosedN (.mkInst ls df.rhs) ∧
+      ClosedN (.mkInst ls df.type) :=
+  have ⟨⟨hA1, _⟩, hA2, hA3⟩ := henv.closed.2 h1
+  ⟨hA1.mkInstS, hA2.mkInstS, hA3.mkInstS⟩
+
+/-! ## CtorBundle transport along `lift'`/`subst` -/
+
+/-- A telescope `Ts.foldr forallE b` transported by any binder-aware map `F`
+is again a telescope of the same length. -/
+theorem foldr_forallE_map {α : Type} {F : α → SExpr → SExpr} {step : α → α}
+    (hPi : ∀ x A B, F x (.forallE A B) = .forallE (F x A) (F (step x) B)) :
+    ∀ (Ts : List SExpr) (x : α) (b : SExpr),
+      ∃ (Ts' : List SExpr) (x' : α), Ts'.length = Ts.length ∧
+        F x (Ts.foldr .forallE b) = Ts'.foldr .forallE (F x' b)
+  | [], x, b => ⟨[], x, rfl, rfl⟩
+  | T :: Ts, x, b => by
+    have ⟨Ts', x', h1, h2⟩ := foldr_forallE_map hPi Ts (step x) b
+    exact ⟨F x T :: Ts', x', by simp [h1], by simp [List.foldr, hPi, h2]⟩
+
+theorem foldr_app_map {α : Type} {F : α → SExpr → SExpr}
+    (hApp : ∀ x f a, F x (.app f a) = .app (F x f) (F x a))
+    (hConst : ∀ x c ls, F x (.const c ls) = .const c ls) (x : α) :
+    ∀ (args : List SExpr),
+      F x (args.foldr (fun A acc => acc.app A) (.const I ls)) =
+        (args.map (F x)).foldr (fun A acc => acc.app A) (.const I ls)
+  | [] => hConst ..
+  | a :: args => by simp [List.foldr, hApp, foldr_app_map hApp hConst x args]
+
+theorem CtorBundle.exists_map {α : Type} {F : α → SExpr → SExpr} {step : α → α}
+    (hPi : ∀ x A B, F x (.forallE A B) = .forallE (F x A) (F (step x) B))
+    (hApp : ∀ x f a, F x (.app f a) = .app (F x f) (F x a))
+    (hConst : ∀ x c ls, F x (.const c ls) = .const c ls)
+    {c cl} (B : CtorBundle c cl) (x : α) (ls : List SLevel) :
+    ∃ B' : CtorBundle c cl, B'.u = B.u ∧ B'.rhs ls = F x (B.rhs ls) := by
+  have ⟨Ts', x', h1, h2⟩ := foldr_forallE_map hPi B.Ts x
+    (B.args.foldr (fun A acc => acc.app A) (.const B.I ls))
+  refine ⟨⟨B.I, Ts', B.args.map (F x'), B.u, h1.trans B.hlen, by simpa using B.hclI, B.hu0⟩,
+    rfl, ?_⟩
+  simp only [CtorBundle.rhs, h2, foldr_app_map hApp hConst]
+
+theorem CtorBundle.exists_lift' {c cl} (B : CtorBundle c cl) (ρ : Lift) (ls : List SLevel) :
+    ∃ B' : CtorBundle c cl, B'.u = B.u ∧ B'.rhs ls = (B.rhs ls).lift' ρ :=
+  CtorBundle.exists_map (F := fun ρ e => e.lift' ρ) (step := Lift.cons)
+    (fun _ _ _ => rfl) (fun _ _ _ => rfl) (fun _ _ _ => rfl) B ρ ls
+
+theorem CtorBundle.exists_subst {c cl} (B : CtorBundle c cl) (σ : Subst) (ls : List SLevel) :
+    ∃ B' : CtorBundle c cl, B'.u = B.u ∧ B'.rhs ls = (B.rhs ls).subst σ :=
+  CtorBundle.exists_map (F := fun σ e => e.subst σ) (step := Subst.lift)
+    (fun _ _ _ => rfl) (fun _ _ _ => rfl) (fun _ _ _ => rfl) B σ ls
+
+
+local notation:65 Γ " ⊢ₛ " e1 " : " A:36 => IsDefEqStrong Params.env Γ e1 e1 A
+local notation:65 Γ " ⊢ₛ " e1 " ≡ " e2 " : " A:36 => IsDefEqStrong Params.env Γ e1 e2 A
+
+/-! The structural lemmas below hold over any environment `E`; only `weak'` needs `E ≤ Params.env`
+(for the closedness of constant types and rules). -/
+
+/-- `hasType` at a sort-typed judgment is free. -/
+theorem IsDefEqStrong.hasTypeS {E : VEnv} (H : IsDefEqStrong E Γ e1 e2 (.sort u)) :
+    IsDefEqStrong E Γ e1 e1 (.sort u) ∧ IsDefEqStrong E Γ e2 e2 (.sort u) :=
+  ⟨.trans .sort H H.symm, .trans .sort H.symm H⟩
+
+theorem IsDefEqStrong.hasType' {E : VEnv} (hA : IsDefEqStrong E Γ A A (.sort u))
+    (H : IsDefEqStrong E Γ e1 e2 A) : IsDefEqStrong E Γ e1 e1 A ∧ IsDefEqStrong E Γ e2 e2 A :=
+  ⟨.trans hA H H.symm, .trans hA H.symm H⟩
+
+/-- Every strong judgment has a sort-typed type (no context hypothesis needed). -/
+theorem IsDefEqStrong.isType' {E : VEnv} (H : IsDefEqStrong E Γ e1 e2 A) :
+    ∃ u, IsDefEqStrong E Γ A A (.sort u) := by
+  induction H with
+  | bvar _ hA => exact ⟨_, hA⟩
+  | symm _ ih => exact ih
+  | trans hA => exact ⟨_, hA⟩
+  | trans' => exact ⟨_, .sort⟩
+  | sort => exact ⟨_, .sort⟩
+  | const _ _ hT => exact ⟨_, hT⟩
+  | appDF _ _ _ _ hBi => exact ⟨_, hBi.hasTypeS.1⟩
+  | lamDF hA hB => exact ⟨_, .forallEDF hA.hasTypeS.1 hB hB⟩
+  | forallEDF => exact ⟨_, .sort⟩
+  | defeqDF hAB => exact ⟨_, hAB.hasTypeS.2⟩
+  | beta _ _ _ _ _ _ _ ih => exact ih
+  | eta _ _ ih => exact ih
+  | proofIrrel hp => exact ⟨_, hp⟩
+  | extra _ _ _ _ ih => exact ih
+
+theorem IsDefEqStrong.hasType {E : VEnv} (H : IsDefEqStrong E Γ e1 e2 A) :
+    IsDefEqStrong E Γ e1 e1 A ∧ IsDefEqStrong E Γ e2 e2 A :=
+  let ⟨_, hA⟩ := H.isType'; IsDefEqStrong.hasType' hA H
+
+theorem IsDefEqStrong.closedN {E : VEnv} (H : IsDefEqStrong E Γ e1 e2 A) :
+    ClosedN e1 Γ.length ∧ ClosedN e2 Γ.length ∧ ClosedN A Γ.length := by
+  induction H with
+  | bvar h _ ih => exact ⟨h.lt, h.lt, ih.1⟩
+  | symm _ ih => exact ⟨ih.2.1, ih.1, ih.2.2⟩
+  | trans _ _ _ _ ih1 ih2 => exact ⟨ih1.1, ih2.2.1, ih1.2.2⟩
+  | trans' _ _ ih1 ih2 => exact ⟨ih1.1, ih2.2.1, trivial⟩
+  | sort => exact ⟨trivial, trivial, trivial⟩
+  | const _ _ _ _ _ ihT => exact ⟨trivial, trivial, ihT.1⟩
+  | appDF _ _ _ _ _ _ _ ihf iha ihB => exact ⟨⟨ihf.1, iha.1⟩, ⟨ihf.2.1, iha.2.1⟩, ihB.1⟩
+  | lamDF _ _ _ _ ihA ihB ih1 _ => exact ⟨⟨ihA.1, ih1.1⟩, ⟨ihA.2.1, ih1.2.1⟩, ihA.1, ihB.1⟩
+  | forallEDF _ _ _ ihA ih1 _ => exact ⟨⟨ihA.1, ih1.1⟩, ⟨ihA.2.1, ih1.2.1⟩, trivial⟩
+  | defeqDF _ _ ih1 ih2 => exact ⟨ih2.1, ih2.2.1, ih1.2.1⟩
+  | beta _ _ _ _ _ _ ih3 ih4 => exact ⟨ih3.1, ih4.1, ih3.2.2⟩
+  | eta _ _ ih1 ih2 => exact ⟨ih2.1, ih1.1, ih1.2.2⟩
+  | proofIrrel _ _ _ _ ih2 ih3 => exact ⟨ih2.1, ih3.1, ih2.2.2⟩
+  | extra _ _ _ _ ih1 ih2 => exact ⟨ih1.1, ih2.1, ih1.2.2⟩
+
+/-! ## Weakening -/
+
+theorem IsDefEqStrong.weak' {E : VEnv} (hE : E ≤ Params.env) (W : Ctx.Lift' ρ Γ Γ')
+    (H : IsDefEqStrong E Γ e1 e2 A) :
+    IsDefEqStrong E Γ' (e1.lift' ρ) (e2.lift' ρ) (A.lift' ρ) := by
+  induction H generalizing ρ Γ' with
+  | bvar h _ ih => exact .bvar (h.weak' W) (ih W)
+  | symm _ ih => exact .symm (ih W)
+  | trans _ _ _ ih1 ih2 ih3 => exact .trans (ih1 W) (ih2 W) (ih3 W)
+  | trans' _ _ ih1 ih2 => exact .trans' (ih1 W) (ih2 W)
+  | sort => exact .sort
+  | @const c ci Γ ls u h1 h2 _ F _ ihT ihF =>
+    have eT := (constType_closed (ls := ls) (hE.1 h1)).lift'_eq (ρ := ρ) .zero
+    have ihT := ihT W; have ihF := fun cl => ihF cl W
+    simp only [eT, lift'_sort] at ihT ihF
+    rw [eT]
+    refine .const h1 h2 ihT (fun cl => ((F cl).exists_lift' ρ ls).choose) fun cl => ?_
+    have ⟨hu, hrhs⟩ := ((F cl).exists_lift' ρ ls).choose_spec
+    rw [hu, hrhs]; exact ihF cl
+  | appDF _ _ _ _ _ ihA ihB ihf iha ihBi =>
+    exact lift'_inst_hi .. ▸ .appDF (ihA W) (ihB W.cons) (ihf W) (iha W)
+      (lift'_inst_hi .. ▸ lift'_inst_hi .. ▸ ihBi W)
+  | lamDF _ _ _ _ ihA ihB ih1 ih2 => exact .lamDF (ihA W) (ihB W.cons) (ih1 W.cons) (ih2 W.cons)
+  | forallEDF _ _ _ ihA ih1 ih2 => exact .forallEDF (ihA W) (ih1 W.cons) (ih2 W.cons)
+  | defeqDF _ _ ih1 ih2 => exact .defeqDF (ih1 W) (ih2 W)
+  | beta _ _ _ _ ih1 ih2 ih3 ih4 =>
+    rw [lift'_inst_hi, lift'_inst_hi]
+    refine .beta (ih1 W.cons) (ih2 W) ?_ ?_
+    · rw [← lift'_inst_hi]; exact ih3 W
+    · rw [← lift'_inst_hi, ← lift'_inst_hi]; exact ih4 W
+  | eta _ _ ih1 ih2 =>
+    refine cast ?_ (IsDefEqStrong.eta (ih1 W) (cast ?_ (ih2 W)))
+    all_goals simp [lift', ← lift'_comp]
+  | proofIrrel _ _ _ ih1 ih2 ih3 => exact .proofIrrel (ih1 W) (ih2 W) (ih3 W)
+  | @extra df Γ ls h1 h2 _ _ ih1 ih2 =>
+    have ⟨hA1, hA2, hA3⟩ := defeq_closed (ls := ls) (hE.2 h1)
+    rw [hA1.lift'_eq .zero, hA2.lift'_eq .zero, hA3.lift'_eq .zero]
+    have ih1 := ih1 W; have ih2 := ih2 W
+    rw [hA1.lift'_eq .zero, hA3.lift'_eq .zero] at ih1
+    rw [hA2.lift'_eq .zero, hA3.lift'_eq .zero] at ih2
+    exact .extra h1 h2 ih1 ih2
+
+/-- Lookups are unaffected by appending outer (older) context entries. -/
+theorem Lookup.append_right (H : Lookup Γ i A) : Lookup (Γ ++ Γ₀) i A := by
+  induction H with
+  | zero => exact .zero
+  | succ _ ih => exact .succ ih
+
+/-- Weakening by outer (older) context entries: no term changes, so no environment hypothesis. -/
+theorem IsDefEqStrong.weak_append {E : VEnv} (H : IsDefEqStrong E Δ e1 e2 A) :
+    IsDefEqStrong E (Δ ++ Γ₀) e1 e2 A := by
+  induction H with
+  | bvar h _ ih => exact .bvar h.append_right ih
+  | symm _ ih => exact .symm ih
+  | trans _ _ _ ih1 ih2 ih3 => exact .trans ih1 ih2 ih3
+  | trans' _ _ ih1 ih2 => exact .trans' ih1 ih2
+  | sort => exact .sort
+  | const h1 h2 _ F _ ih3 ih5 => exact .const h1 h2 ih3 F ih5
+  | appDF _ _ _ _ _ ih1 ih2 ih3 ih4 ih5 => exact .appDF ih1 ih2 ih3 ih4 ih5
+  | lamDF _ _ _ _ ih1 ih2 ih3 ih4 => exact .lamDF ih1 ih2 ih3 ih4
+  | forallEDF _ _ _ ih1 ih2 ih3 => exact .forallEDF ih1 ih2 ih3
+  | defeqDF _ _ ih1 ih2 => exact .defeqDF ih1 ih2
+  | beta _ _ _ _ ih1 ih2 ih3 ih4 => exact .beta ih1 ih2 ih3 ih4
+  | eta _ _ ih1 ih2 => exact .eta ih1 ih2
+  | proofIrrel _ _ _ ih1 ih2 ih3 => exact .proofIrrel ih1 ih2 ih3
+  | extra h1 h2 _ _ ih1 ih2 => exact .extra h1 h2 ih1 ih2
+
+theorem IsDefEqStrong.weak0 {E : VEnv} (H : IsDefEqStrong E [] e1 e2 A) :
+    IsDefEqStrong E Γ e1 e2 A :=
+  H.weak_append (Γ₀ := Γ)
+
+/-! ## Inversion for Pi types -/
+
+theorem IsDefEqStrong.forallE_inv' {E : VEnv} (H : IsDefEqStrong E Γ e1 e2 V)
+    (eq : e1 = A.forallE B ∨ e2 = A.forallE B) :
+    (∃ u, IsDefEqStrong E Γ A A (.sort u)) ∧ ∃ v, IsDefEqStrong E (A::Γ) B B (.sort v) := by
+  induction H generalizing A B with
+  | symm _ ih => exact ih eq.symm
+  | trans _ _ _ _ ih1 ih2
+  | trans' _ _ ih1 ih2
+  | proofIrrel _ _ _ _ ih1 ih2 =>
+    obtain eq | eq := eq
+    · exact ih1 (.inl eq)
+    · exact ih2 (.inr eq)
+  | forallEDF h1 h2 h3 =>
+    obtain ⟨⟨⟩⟩ | ⟨⟨⟩⟩ := eq
+    · exact ⟨⟨_, h1.hasTypeS.1⟩, _, h2.hasTypeS.1⟩
+    · exact ⟨⟨_, h1.hasTypeS.2⟩, _, h3.hasTypeS.2⟩
+  | defeqDF _ _ _ ih2 => exact ih2 eq
+  | beta _ _ _ _ _ _ _ ih =>
+    obtain ⟨⟨⟩⟩ | eq := eq
+    exact ih (.inr eq)
+  | eta _ _ ih _ =>
+    obtain ⟨⟨⟩⟩ | eq := eq
+    exact ih (.inr eq)
+  | extra _ _ _ _ ih1 ih2 =>
+    obtain eq | eq := eq
+    · exact ih1 (.inl eq)
+    · exact ih2 (.inl eq)
+  | _ => nomatch eq
+
+/-- Every domain of a syntactic Π-telescope, and its codomain, strongly typed in its own
+telescope context, in the environment `E`. -/
+inductive TelStrongE (E : VEnv) : List SExpr → List SExpr → SExpr → Prop where
+  | nil : IsDefEqStrong E Γ B B (.sort v) → TelStrongE E Γ [] B
+  | cons : IsDefEqStrong E Γ T T (.sort u) → TelStrongE E (T :: Γ) Ts B →
+      TelStrongE E Γ (T :: Ts) B
+
+/-- A strongly typed syntactic Π-telescope is strongly typed binder by binder, in the same `E`. -/
+theorem IsDefEqStrong.telescope {E : VEnv} : ∀ {Ts : List SExpr} {Γ B e2 u},
+    IsDefEqStrong E Γ (Ts.foldr .forallE B) e2 (.sort u) → TelStrongE E Γ Ts B
+  | [], _, _, _, _, H => .nil H.hasTypeS.1
+  | T :: Ts, _, _, _, _, H => by
+    obtain ⟨⟨_, hT⟩, _, hB⟩ := H.forallE_inv' (A := T) (B := Ts.foldr .forallE _) (.inl rfl)
+    exact .cons hT (IsDefEqStrong.telescope hB)
+
+/-- `[bvar 5] ⊢ bvar 0 : bvar 6` holds weakly (ill-formed context), but no strong
+derivation can have the non-closed type `bvar 6` in a context of length 1: the
+well-formedness hypothesis of `IsDefEq.strong` cannot be dropped. -/
+theorem IsDefEq.strong_counterexample :
+    ¬ ∀ {Γ e1 e2 A}, Γ ⊢ e1 ≡ e2 : A → IsDefEqStrong Params.env Γ e1 e2 A := fun h =>
+  have := (h (IsDefEq.bvar (Γ := [.bvar 5]) .zero)).closedN
+  by simp [ClosedN, SExpr.lift] at this
+
+/-! ## Strongly well-formed contexts -/
+
+def CtxStrong : List SExpr → Prop
+  | [] => True
+  | A :: Γ => CtxStrong Γ ∧ ∃ u, Γ ⊢ₛ A : .sort u
+
+theorem CtxStrong.lookup {Γ} (H : CtxStrong Γ) (h : Lookup Γ i A) : ∃ u, Γ ⊢ₛ A : .sort u := by
+  induction h with
+  | zero => let ⟨_, _, hA⟩ := H; exact ⟨_, hA.weak' .rfl .one⟩
+  | succ _ ih => let ⟨H', _⟩ := H; let ⟨_, hA⟩ := ih H'; exact ⟨_, hA.weak' .rfl .one⟩
+
+theorem CtxStrong.wf : ∀ {Γ}, CtxStrong Γ → ⊢ Γ
+  | [], _ => trivial
+  | _ :: _, ⟨h1, _, h2⟩ => ⟨h1.wf, _, h2.defeq⟩
+
+/-! ## Simultaneous substitution for the strong judgment -/
+
+/-- Strong version of `Ctx.SubstEq`: `σ`, `σ'` are pointwise strongly defeq
+substitutions from `Γ` into `Γ₀`. The base case is the empty source context
+(as in the DomainSemantics reference), so `Ctx.SubstEqS.id` needs `CtxStrong Γ`. -/
+inductive Ctx.SubstEqS (Γ₀ : List SExpr) : SExpr.Subst → SExpr.Subst → List SExpr → Prop where
+  | nil : Ctx.SubstEqS Γ₀ σ σ' []
+  | cons : Ctx.SubstEqS Γ₀ σ.tail σ'.tail Γ →
+    Γ ⊢ₛ A : .sort u →
+    Γ₀ ⊢ₛ σ.head ≡ σ'.head : A.subst σ.tail →
+    Ctx.SubstEqS Γ₀ σ σ' (A :: Γ)
+
+theorem Ctx.SubstEqS.left (W : Ctx.SubstEqS Γ₀ σ σ' Γ) : Ctx.SubstEqS Γ₀ σ σ Γ := by
   induction W with
   | nil => exact .nil
-  | cons W hA h ih => exact .cons ih hA (.defeqDF (.subst W hA) h.symm)
+  | cons _ hA hhead ih => exact .cons ih hA hhead.hasType.1
 
-theorem Ctx.SubstEq.lookup (W : Ctx.SubstEq Γ₀ σ σ' Γ) :
-    Lookup Γ i A → Γ₀ ⊢ σ i ≡ σ' i : A.subst σ := sorry
+theorem Ctx.SubstEqS.wf (W : Ctx.SubstEqS Γ₀ σ σ' Γ) : CtxStrong Γ := by
+  induction W with
+  | nil => trivial
+  | cons _ hA _ ih => exact ⟨ih, _, hA⟩
 
-theorem Ctx.SubstEq.lift (W : Ctx.SubstEq Γ₀ σ σ' Γ) (hA : Γ₀ ⊢ A.subst σ : .sort u) :
-    Ctx.SubstEq (A.subst σ :: Γ₀) σ.lift σ'.lift (A :: Γ) := sorry
+theorem Ctx.SubstEqS.lookup (W : Ctx.SubstEqS Γ₀ σ σ' Γ) :
+    Lookup Γ i A → Γ₀ ⊢ₛ σ i ≡ σ' i : A.subst σ := by
+  intro h
+  induction W generalizing i A with
+  | nil => nomatch h
+  | cons _ _ hhead ih =>
+    cases h with
+    | zero => rw [lift_subst]; exact hhead
+    | succ h => rw [lift_subst]; exact ih h
+
+theorem Ctx.SubstEqS.skip (W : Ctx.SubstEqS Γ₀ σ σ' Γ) :
+    Ctx.SubstEqS (B :: Γ₀) (σ.lift_r (.skip .refl)) (σ'.lift_r (.skip .refl)) Γ := by
+  induction W with
+  | nil => exact .nil
+  | cons _ hA hhead ih =>
+    refine .cons (Subst.lift_r_tail ▸ Subst.lift_r_tail ▸ ih) hA ?_
+    rw [Subst.lift_r_tail]
+    have := hhead.weak' .rfl (Ctx.Lift'.one (A := B))
+    rwa [lift'_subst] at this
+
+theorem Ctx.SubstEqS.lift (W : Ctx.SubstEqS Γ₀ σ σ' Γ)
+    (hA : Γ ⊢ₛ A : .sort u) (hA' : Γ₀ ⊢ₛ A.subst σ : .sort u') :
+    Ctx.SubstEqS (A.subst σ :: Γ₀) σ.lift σ'.lift (A :: Γ) := by
+  refine .cons (Subst.lift_tail_eq σ ▸ Subst.lift_tail_eq σ' ▸ W.skip) hA ?_
+  show A.subst σ :: Γ₀ ⊢ₛ .bvar 0 : A.subst σ.lift.tail
+  rw [Subst.lift_tail_eq, ← lift'_subst]
+  exact .bvar .zero (hA'.weak' .rfl .one)
+
+theorem Ctx.SubstEqS.lift_at (W : Ctx.SubstEqS Γ₀ σ σ' Γ)
+    (hA : Γ ⊢ₛ A : .sort u) (hX : Γ₀ ⊢ₛ X : .sort u')
+    (hAX : Γ₀ ⊢ₛ A.subst σ ≡ X : .sort u'') :
+    Ctx.SubstEqS (X :: Γ₀) σ.lift σ'.lift (A :: Γ) := by
+  refine .cons (Subst.lift_tail_eq σ ▸ Subst.lift_tail_eq σ' ▸ W.skip) hA ?_
+  show X :: Γ₀ ⊢ₛ .bvar 0 : A.subst σ.lift.tail
+  rw [Subst.lift_tail_eq, ← lift'_subst]
+  exact .defeqDF (hAX.symm.weak' .rfl .one) (.bvar .zero (hX.weak' .rfl .one))
+
+theorem Ctx.SubstEqS.id : ∀ {Γ}, CtxStrong Γ → Ctx.SubstEqS Γ .id .id Γ
+  | [], _ => .nil
+  | A :: Γ, ⟨hΓ, _, hA⟩ => by
+    refine .cons (Subst.id_tail_eq ▸ (id hΓ).skip) hA ?_
+    show A :: Γ ⊢ₛ .bvar 0 : A.subst SExpr.Subst.id.tail
+    rw [Subst.id_tail_eq, ← lift'_subst, subst_id]
+    exact .bvar .zero (hA.weak' .rfl .one)
+
+theorem Ctx.SubstEqS.one (hΓ : CtxStrong Γ) (hA : Γ ⊢ₛ A : .sort u) (ha : Γ ⊢ₛ a ≡ a' : A) :
+    Ctx.SubstEqS Γ (.one a) (.one a') (A :: Γ) := by
+  refine .cons (σ := .one a) (σ' := .one a') (.id hΓ) hA ?_
+  show Γ ⊢ₛ a ≡ a' : A.subst .id
+  rw [subst_id]; exact ha
+
+/-- **Simultaneous substitution for the strong judgment**: left/right/cross bundle.
+No context hypotheses needed. -/
+theorem IsDefEqStrong.substEq' (W : Ctx.SubstEqS Γ₀ σ τ Γ) (H : Γ ⊢ₛ e1 ≡ e2 : A) :
+    Γ₀ ⊢ₛ e1.subst σ ≡ e1.subst τ : A.subst σ ∧
+    Γ₀ ⊢ₛ e2.subst σ ≡ e2.subst τ : A.subst σ ∧
+    Γ₀ ⊢ₛ e1.subst σ ≡ e2.subst τ : A.subst σ := by
+  induction H generalizing Γ₀ σ τ with
+  | bvar h _ => exact ⟨W.lookup h, W.lookup h, W.lookup h⟩
+  | sort => exact ⟨.sort, .sort, .sort⟩
+  | symm _ ih =>
+    let ⟨l, r, c⟩ := ih W
+    let ⟨_, hA⟩ := l.isType'
+    exact ⟨r, l, .trans hA r (.trans hA c.symm l)⟩
+  | trans _ _ _ _ ih1 ih2 =>
+    let ⟨l1, _, c1⟩ := ih1 W
+    let ⟨l2, r2, c2⟩ := ih2 W
+    let ⟨_, hA⟩ := l1.isType'
+    exact ⟨l1, r2, .trans hA c1 (.trans hA l2.symm c2)⟩
+  | trans' _ _ ih1 ih2 =>
+    let ⟨l1, _, c1⟩ := ih1 W
+    let ⟨l2, _, c2⟩ := ih2 W
+    have cross := c1.trans' (.trans .sort l2.symm c2)
+    exact ⟨l1, .trans .sort ((ih1 W.left).2.2.trans' (ih2 W.left).2.2).symm cross, cross⟩
+  | defeqDF _ _ ih1 ih2 =>
+    have := (ih1 W.left).2.2
+    let ⟨l2, r2, c2⟩ := ih2 W
+    exact ⟨.defeqDF this l2, .defeqDF this r2, .defeqDF this c2⟩
+  | proofIrrel _ _ _ ih1 ih2 ih3 =>
+    let ⟨ihp, _, _⟩ := ih1 W
+    let ⟨ihh, _, _⟩ := ih2 W
+    let ⟨ihh', _, _⟩ := ih3 W
+    have hp := ihp.hasTypeS.1
+    exact ⟨ihh, ihh', .proofIrrel hp (IsDefEqStrong.hasType' hp ihh).1 (IsDefEqStrong.hasType' hp ihh').2⟩
+  | @const c ci Γ ls u h1 h2 _ F _ ihT ihF =>
+    have eT := fun θ : Subst => (constType_closed (ls := ls) h1).subst_eq (σ := θ) .zero
+    have ihT := (ihT W).1; have ihF := fun cl => (ihF cl W.left).2.2
+    simp only [eT, subst_sort] at ihT ihF
+    simp only [subst_const, eT]
+    have C := IsDefEqStrong.const h1 h2 ihT (fun cl => ((F cl).exists_subst σ ls).choose)
+      fun cl => by
+        have ⟨hu, hrhs⟩ := ((F cl).exists_subst σ ls).choose_spec
+        rw [hu, hrhs]; exact ihF cl
+    exact ⟨C, C, C⟩
+  | @extra df Γ ls h1 h2 _ _ ih1 ih2 =>
+    have ⟨hA1, hA2, hA3⟩ := defeq_closed (ls := ls) h1
+    have el : ∀ θ : Subst, (SExpr.mkInst ls df.lhs).subst θ = _ := fun _ => hA1.subst_eq .zero
+    have er : ∀ θ : Subst, (SExpr.mkInst ls df.rhs).subst θ = _ := fun _ => hA2.subst_eq .zero
+    have et : ∀ θ : Subst, (SExpr.mkInst ls df.type).subst θ = _ := fun _ => hA3.subst_eq .zero
+    have ih1 := (ih1 W.left).1; have ih2 := (ih2 W.left).1
+    simp only [el, er, et] at ih1 ih2 ⊢
+    exact ⟨ih1, ih2, .extra h1 h2 ih1 ih2⟩
+  | @appDF Γ A u B v f f' a a' hA _ _ _ _ ihA ihB ihf iha ihBi =>
+    have hA' := (ihA W).1.hasTypeS.1
+    have W_A_diag := W.left.lift hA hA'
+    have hB' := (ihB W_A_diag).1.hasTypeS.1
+    have ⟨ihf_l, ihf_r, ihf_c⟩ := ihf W
+    have ⟨iha_l, iha_r, iha_c⟩ := iha W
+    have ⟨_, _, iha_cleft⟩ := iha W.left
+    have ih2_cons : ∀ {x y : SExpr}, Γ₀ ⊢ₛ x ≡ y : A.subst σ →
+        Γ₀ ⊢ₛ (B.subst σ.lift).inst x ≡ (B.subst σ.lift).inst y : .sort v := by
+      intro x y hxy
+      have W_cons : Ctx.SubstEqS Γ₀ (σ.cons x) (σ.cons y) (A :: Γ) :=
+        .cons (σ := σ.cons x) (σ' := σ.cons y) W.left hA hxy
+      have := (ihB W_cons).1
+      rwa [← inst_lift_cons, ← inst_lift_cons] at this
+    refine subst_inst ▸ ⟨?_, .defeqDF (ih2_cons iha_cleft.symm) ?_, ?_⟩
+    · exact .appDF hA' hB' ihf_l iha_l (ih2_cons iha_l)
+    · exact .appDF hA' hB' ihf_r iha_r (ih2_cons iha_r)
+    · exact .appDF hA' hB' ihf_c iha_c (ih2_cons iha_c)
+  | @lamDF Γ A A' u B v body body' h1 _ _ _ ih1 ih2 ih3 ih4 =>
+    let ⟨ihA_l, ihA_r, ihA_c⟩ := ih1 W
+    have hA_in_Γ := h1.hasTypeS.1
+    have hA'_in_Γ := h1.hasTypeS.2
+    have hAA'_σ := (ih1 W.left).2.2
+    have W_A := W.lift hA_in_Γ ihA_l.hasTypeS.1
+    have W_A_τ := W.lift_at hA_in_Γ ihA_l.hasTypeS.2 ihA_l
+    have W_A' := W.lift hA'_in_Γ ihA_r.hasTypeS.1
+    have W_A'_τ := W.lift_at hA'_in_Γ ihA_r.hasTypeS.2 ihA_r
+    have W_A_to_A'τ := W.lift_at hA_in_Γ ihA_r.hasTypeS.2 ihA_c
+    have W_left_A'σ := W.left.lift_at hA_in_Γ ihA_r.hasTypeS.1 hAA'_σ
+    have hB := (ih2 W_A).1.hasTypeS.1
+    have hB_at_A'σ := (ih2 W_left_A'σ).1.hasTypeS.1
+    let ⟨ih3body_l, _, ih3body_c⟩ := ih3 W_A
+    have ih3body_l_at_Aτ := (ih3 W_A_τ).1
+    have ih3body_c_at_A'τ := (ih3 W_A_to_A'τ).2.2
+    let ⟨_, ih4body_r, _⟩ := ih4 W_A'
+    have ih4body_r_at_A'τ := (ih4 W_A'_τ).2.1
+    refine ⟨?_, .defeqDF (hAA'_σ.symm.forallEDF hB_at_A'σ hB) ?_, ?_⟩
+    · exact .lamDF ihA_l hB ih3body_l ih3body_l_at_Aτ
+    · exact .lamDF ihA_r hB_at_A'σ ih4body_r ih4body_r_at_A'τ
+    · exact .lamDF ihA_c hB ih3body_c ih3body_c_at_A'τ
+  | @forallEDF Γ A A' u body body' v h1 _ _ ih1 ih2 ih3 =>
+    let ⟨ihA_l, ihA_r, ihA_c⟩ := ih1 W
+    have hA_in_Γ := h1.hasTypeS.1
+    have hA'_in_Γ := h1.hasTypeS.2
+    have W_A := W.lift hA_in_Γ ihA_l.hasTypeS.1
+    have W_A' := W.lift hA'_in_Γ ihA_r.hasTypeS.1
+    have W_A_τ := W.lift_at hA_in_Γ ihA_l.hasTypeS.2 ihA_l
+    have W_A'_τ := W.lift_at hA'_in_Γ ihA_r.hasTypeS.2 ihA_r
+    have W_A_to_A'τ := W.lift_at hA_in_Γ ihA_r.hasTypeS.2 ihA_c
+    let ⟨ihB_l, _, ihB_c⟩ := ih2 W_A
+    have ihB_l_at_Aτ := (ih2 W_A_τ).1
+    have ihB_c_at_A'τ := (ih2 W_A_to_A'τ).2.2
+    let ⟨_, ihB'_r, _⟩ := ih3 W_A'
+    have ihB'_r_at_A'τ := (ih3 W_A'_τ).2.1
+    exact ⟨.forallEDF ihA_l ihB_l ihB_l_at_Aτ, .forallEDF ihA_r ihB'_r ihB'_r_at_A'τ,
+      .forallEDF ihA_c ihB_c ihB_c_at_A'τ⟩
+  | @beta A Γ e B e' _ he' _ _ ih2 ih3 ih4 ih5 =>
+    have ⟨_, hA⟩ := he'.isType'
+    have ih4_l := (ih4 W).1
+    have ih5_l := (ih5 W).1
+    have he'σ := (ih3 W.left).1
+    have ⟨_, hAσ⟩ := he'σ.isType'
+    have heσ := (ih2 (W.left.lift hA hAσ)).1
+    have happσ := (ih4 W.left).1
+    have heinstσ := (ih5 W.left).1
+    have H_σ : Γ₀ ⊢ₛ (SExpr.app (.lam A e) e').subst σ ≡ (e.inst e').subst σ :
+        (B.inst e').subst σ := by
+      show Γ₀ ⊢ₛ SExpr.app (.lam (A.subst σ) (e.subst σ.lift)) (e'.subst σ) ≡ _ : _
+      rw [show (e.inst e').subst σ = (e.subst σ.lift).inst (e'.subst σ) from subst_inst,
+          show (B.inst e').subst σ = (B.subst σ.lift).inst (e'.subst σ) from subst_inst]
+      refine .beta heσ he'σ ?_ ?_
+      · rw [show (B.subst σ.lift).inst (e'.subst σ) = (B.inst e').subst σ from subst_inst.symm]
+        exact happσ
+      · rw [show (B.subst σ.lift).inst (e'.subst σ) = (B.inst e').subst σ from subst_inst.symm,
+            show (e.subst σ.lift).inst (e'.subst σ) = (e.inst e').subst σ from subst_inst.symm]
+        exact heinstσ
+    have ⟨_, hT⟩ := ih4_l.isType'
+    exact ⟨ih4_l, ih5_l, .trans hT H_σ ih5_l⟩
+  | @eta Γ e A B _ _ ih1 ih2 =>
+    have ih1_l := (ih1 W).1
+    have ih2_l := (ih2 W).1
+    have he_σ := (ih1 W.left).1
+    have hlam_σ := (ih2 W.left).1
+    have h_lam_eq : (SExpr.lam A (.app e.lift (.bvar 0))).subst σ =
+        .lam (A.subst σ) (.app (e.subst σ).lift (.bvar 0)) := by
+      show SExpr.lam (A.subst σ) (.app (e.lift.subst σ.lift) ((SExpr.bvar 0).subst σ.lift)) = _
+      rw [lift_subst_lift]; rfl
+    have H_σ : Γ₀ ⊢ₛ (SExpr.lam A (.app e.lift (.bvar 0))).subst σ ≡ e.subst σ :
+        (SExpr.forallE A B).subst σ := h_lam_eq ▸ .eta he_σ (h_lam_eq ▸ hlam_σ)
+    have ⟨_, hT⟩ := ih1_l.isType'
+    exact ⟨ih2_l, ih1_l, .trans hT H_σ ih1_l⟩
+
+theorem IsDefEqStrong.subst (W : Ctx.SubstEqS Γ₀ σ σ' Γ) (H : Γ ⊢ₛ e1 ≡ e2 : A) :
+    Γ₀ ⊢ₛ e1.subst σ ≡ e2.subst σ' : A.subst σ :=
+  (H.substEq' W).2.2
+
+theorem IsDefEqStrong.instDF (hΓ : CtxStrong Γ) (hA : Γ ⊢ₛ A : .sort u)
+    (hf : A::Γ ⊢ₛ f ≡ f' : B) (ha : Γ ⊢ₛ a ≡ a' : A) :
+    Γ ⊢ₛ f.inst a ≡ f'.inst a' : B.inst a :=
+  hf.subst (.one hΓ hA ha)
+
+theorem IsDefEqStrong.defeqDF_l (hΓ : CtxStrong Γ)
+    (h1 : Γ ⊢ₛ A ≡ A' : .sort u) (h2 : A::Γ ⊢ₛ e1 ≡ e2 : B) : A'::Γ ⊢ₛ e1 ≡ e2 : B := by
+  have W : Ctx.SubstEqS (A'::Γ) .id .id (A::Γ) := by
+    refine .cons (Subst.id_tail_eq ▸ (Ctx.SubstEqS.id hΓ).skip) h1.hasTypeS.1 ?_
+    show A' :: Γ ⊢ₛ .bvar 0 : A.subst SExpr.Subst.id.tail
+    rw [Subst.id_tail_eq, ← lift'_subst, subst_id]
+    exact .defeqDF (h1.weak' .rfl .one).symm (.bvar .zero (h1.hasTypeS.2.weak' .rfl .one))
+  have := h2.subst W
+  rwa [subst_id, subst_id, subst_id] at this
+
+/-! ## Derived rules with the weak premises -/
+
+theorem IsDefEqStrong.appDF₀ (hΓ : CtxStrong Γ)
+    (hf : Γ ⊢ₛ f ≡ f' : .forallE A B) (ha : Γ ⊢ₛ a ≡ a' : A) :
+    Γ ⊢ₛ .app f a ≡ .app f' a' : B.inst a :=
+  let ⟨_, h3⟩ := hf.isType'
+  let ⟨⟨_, hA⟩, _, hB⟩ := h3.forallE_inv' (.inl rfl)
+  .appDF hA hB hf ha (.instDF hΓ hA hB ha)
+
+theorem IsDefEqStrong.lamDF₀ (hΓ : CtxStrong Γ)
+    (hA : Γ ⊢ₛ A ≡ A' : .sort u) (hbody : A::Γ ⊢ₛ body ≡ body' : B) :
+    Γ ⊢ₛ .lam A body ≡ .lam A' body' : .forallE A B :=
+  let ⟨_, hB⟩ := hbody.isType'
+  .lamDF hA hB hbody (hA.defeqDF_l hΓ hbody)
+
+theorem IsDefEqStrong.forallEDF₀ (hΓ : CtxStrong Γ)
+    (hA : Γ ⊢ₛ A ≡ A' : .sort u) (hbody : A::Γ ⊢ₛ body ≡ body' : .sort v) :
+    Γ ⊢ₛ .forallE A body ≡ .forallE A' body' : .sort (.imax u v) :=
+  .forallEDF hA hbody (hA.defeqDF_l hΓ hbody)
+
+theorem IsDefEqStrong.beta₀ (hΓ : CtxStrong Γ) (he : A::Γ ⊢ₛ e : B) (he' : Γ ⊢ₛ e' : A) :
+    Γ ⊢ₛ .app (.lam A e) e' ≡ e.inst e' : B.inst e' :=
+  have ⟨_, hA⟩ := he'.isType'
+  .beta he he' (.appDF₀ hΓ (.lamDF₀ hΓ hA he) he') (.instDF hΓ hA he he')
+
+theorem IsDefEqStrong.eta₀ (hΓ : CtxStrong Γ) (he : Γ ⊢ₛ e : .forallE A B) :
+    Γ ⊢ₛ .lam A (.app e.lift (.bvar 0)) ≡ e : .forallE A B := by
+  let ⟨_, hAB⟩ := he.isType'
+  let ⟨⟨_, hA⟩, _, _⟩ := hAB.forallE_inv' (.inl rfl)
+  have : A::Γ ⊢ₛ .app e.lift (.bvar 0) : (B.lift' (.cons (.skip .refl))).inst (.bvar 0) :=
+    .appDF₀ ⟨hΓ, _, hA⟩ (he.weak' .rfl .one) (.bvar .zero (hA.weak' .rfl .one))
+  rw [lift_cons_skip_inst_bvar0] at this
+  exact .eta he (.lamDF₀ hΓ hA this)
+
+/-! ## Environment hypothesis and the main theorem -/
+
+/-- Strong typing of the environment: the constant-type expression, its ctor
+bundle equations, and the lhs/rhs of each defeq are strongly typed in `[]`. -/
+structure EnvStrongS : Prop where
+  const : ∀ {c ci ls}, env.constants c = some ci → ls.length = ci.uvars →
+    ∃ u, [] ⊢ₛ mkInst ls ci.type : .sort u
+  ctor : ∀ {c ci ls}, env.constants c = some ci → ls.length = ci.uvars →
+    ∀ cl : CtorBundle.IsCtor c,
+      ∃ B : CtorBundle c cl, [] ⊢ₛ mkInst ls ci.type ≡ B.rhs ls : .sort B.u
+  defeq : ∀ {df ls}, env.defeqs df → ls.length = df.uvars →
+    [] ⊢ₛ .mkInst ls df.lhs : .mkInst ls df.type ∧
+    [] ⊢ₛ .mkInst ls df.rhs : .mkInst ls df.type
+
+theorem IsDefEq.strongS (envIH : EnvStrongS) (hΓ : CtxStrong Γ) (H : Γ ⊢ e1 ≡ e2 : A) :
+    Γ ⊢ₛ e1 ≡ e2 : A := by
+  induction H with
+  | bvar h => let ⟨_, hA⟩ := hΓ.lookup h; exact .bvar h hA
+  | symm _ ih => exact (ih hΓ).symm
+  | trans _ _ ih1 ih2 => let ⟨_, hA⟩ := (ih1 hΓ).isType'; exact .trans hA (ih1 hΓ) (ih2 hΓ)
+  | trans' _ _ ih1 ih2 => exact .trans' (ih1 hΓ) (ih2 hΓ)
+  | sort => exact .sort
+  | const h1 h2 =>
+    have ⟨_, hT⟩ := envIH.const h1 h2
+    exact .const h1 h2 hT.weak0 (fun cl => (envIH.ctor h1 h2 cl).choose)
+      fun cl => (envIH.ctor h1 h2 cl).choose_spec.weak0
+  | appDF _ _ ih1 ih2 => exact .appDF₀ hΓ (ih1 hΓ) (ih2 hΓ)
+  | lamDF _ _ ih1 ih2 => exact .lamDF₀ hΓ (ih1 hΓ) (ih2 ⟨hΓ, _, (ih1 hΓ).hasTypeS.1⟩)
+  | forallEDF _ _ ih1 ih2 => exact .forallEDF₀ hΓ (ih1 hΓ) (ih2 ⟨hΓ, _, (ih1 hΓ).hasTypeS.1⟩)
+  | defeqDF _ _ ih1 ih2 => exact .defeqDF (ih1 hΓ) (ih2 hΓ)
+  | beta _ _ ih1 ih2 => exact .beta₀ hΓ (ih1 ⟨hΓ, (ih2 hΓ).isType'⟩) (ih2 hΓ)
+  | eta _ ih => exact .eta₀ hΓ (ih hΓ)
+  | proofIrrel _ _ _ ih1 ih2 ih3 => exact .proofIrrel (ih1 hΓ) (ih2 hΓ) (ih3 hΓ)
+  | extra h1 h2 =>
+    have ⟨hl, hr⟩ := envIH.defeq h1 h2
+    exact .extra h1 h2 hl.weak0 hr.weak0
+
+theorem CtxStrong.of_wf (envIH : EnvStrongS) : ∀ {Γ}, ⊢ Γ → CtxStrong Γ
+  | [], _ => trivial
+  | _ :: _, ⟨hΓ, _, hA⟩ => ⟨of_wf envIH hΓ, _, hA.strongS envIH (of_wf envIH hΓ)⟩
+
+/-! ## Translating the VExpr strong judgment
+
+`VEnv.IsDefEqStrong.constDF` carries the typing of the constant's type but nothing about
+constructor telescopes, while `IsDefEqStrong.const` demands a *strong* `SExpr` equation
+`T ≡ (F cl).rhs ls : sort (F cl).u` for every ctor classification. The translation is therefore
+parameterized by a `CtorProvider` that produces this bundle from the data available at the
+`constDF` case. -/
+
+/-- What the translation over the environment `E` needs at each `constDF`. `vs` are the
+(well-formed) `VLevel` representatives of the `SLevel` list, `u` is the sort of the constant's type
+*in the derivation being translated*. -/
+def CtorProviderE (E : VEnv) : Prop :=
+  ∀ {Γ : List SExpr} {c : Name} {ci : VConstant} {vs : List VLevel} {u : VLevel},
+    E.constants c = some ci → (∀ l ∈ vs, l.WF univs) → vs.length = ci.uvars →
+    E.HasType univs [] (ci.type.instL vs) (.sort u) →
+    IsDefEqStrong E Γ (mkInst (vs.map SLevel.mk) ci.type) (mkInst (vs.map SLevel.mk) ci.type)
+      (.sort (SLevel.mk u)) →
+    ∀ cl : CtorBundle.IsCtor c, ∃ B : CtorBundle c cl,
+      IsDefEqStrong E Γ (mkInst (vs.map SLevel.mk) ci.type) (B.rhs (vs.map SLevel.mk)) (.sort B.u)
+
+/-- What the translation needs at each `constDF`, over `Params.env`. -/
+def CtorProvider : Prop := CtorProviderE env
+
+omit [Params] in
+theorem VExpr.liftN_one_one (B : VExpr) : B.liftN 1 1 = B.lift' (.cons (.skip .refl)) := by
+  rw [← VExpr.lift'_consN_skipN]; rfl
+
+/-- Strong-to-strong translation, over any environment `E`. -/
+theorem _root_.Lean4Lean.VEnv.IsDefEqStrong.mkSE {E : VEnv} (hctor : CtorProviderE E)
+    (H : E.IsDefEqStrong Params.univs Γ e₁ e₂ A)
+    (hΓ : OnCtx Γ (fun _ A => A.LevelWF Params.univs)) :
+    IsDefEqStrong E (Γ.map mk) (mk e₁) (mk e₂) (mk A) := by
+  induction H with
+  | bvar h _ _ ih => exact .bvar (SExpr.Lookup.mkS h) (ih hΓ)
+  | symm _ ih => exact .symm (ih hΓ)
+  | trans _ _ ih1 ih2 => let ⟨_, hA⟩ := (ih1 hΓ).isType'; exact .trans hA (ih1 hΓ) (ih2 hΓ)
+  | @sortDF l l' Γ hl hl' h =>
+    change IsDefEqStrong E _ (.sort (SLevel.mk _)) (.sort (SLevel.mk _)) (.sort (SLevel.mk _))
+    have hu := SLevel.mk_eq hl hl' h
+    have hus : SLevel.mk l.succ = (SLevel.mk l').succ := by rw [SLevel.mk_succ hl, hu]
+    rw [hu, hus]
+    exact .sort
+  | @constDF c ci ls ls' u Γ h1 h2 h3 h4 h5 _ h7 _ _ ih8 =>
+    change IsDefEqStrong E _ (.const c (ls.map SLevel.mk)) (.const c (ls'.map SLevel.mk))
+      (mk (ci.type.instL ls))
+    have hls := SLevel.map_mk_eq h2 h3 h5
+    have e1 : mk (ci.type.instL ls) = mkInst (ls.map SLevel.mk) ci.type := (mkInst_map_mk h2).symm
+    have e2 : mk (ci.type.instL ls') = mkInst (ls.map SLevel.mk) ci.type := by
+      rw [← mkInst_map_mk h3, hls]
+    have hT := ih8 hΓ
+    rw [e1, e2] at hT
+    have hT' : IsDefEqStrong E _ (mkInst (ls.map SLevel.mk) ci.type)
+      (mkInst (ls.map SLevel.mk) ci.type) (.sort (SLevel.mk u)) := hT.hasTypeS.1
+    have hV : E.HasType univs [] (ci.type.instL ls) (.sort u) := h7.defeq.hasType.1
+    rw [e1, ← hls]
+    exact .const h1 (by simpa using h4) hT'
+      (fun cl => (hctor h1 h2 h4 hV hT' cl).choose) fun cl => (hctor h1 h2 h4 hV hT' cl).choose_spec
+  | appDF _ _ hA _ _ _ _ ihA ihB ihf iha ihBi =>
+    have hAwf := (hA.defeq.levelWF hΓ).1
+    have hBi := ihBi hΓ
+    simp only [mk, mk_instExpr] at hBi
+    simpa only [mk, mk_instExpr] using
+      IsDefEqStrong.appDF (ihA hΓ) (ihB ⟨hΓ, hAwf⟩) (ihf hΓ) (iha hΓ) hBi
+  | lamDF _ _ hAA' _ _ _ _ ihAA' ihB _ ihbody ihbody' =>
+    have hAwf := (hAA'.defeq.levelWF hΓ).1
+    have hA'wf := (hAA'.defeq.levelWF hΓ).2.1
+    exact .lamDF (ihAA' hΓ) (ihB ⟨hΓ, hAwf⟩) (ihbody ⟨hΓ, hAwf⟩) (ihbody' ⟨hΓ, hA'wf⟩)
+  | forallEDF hu hv hAA' _ _ ihAA' ih1 ih2 =>
+    have hAwf := (hAA'.defeq.levelWF hΓ).1
+    have hA'wf := (hAA'.defeq.levelWF hΓ).2.1
+    simpa only [mk, SLevel.mk_imax hu hv] using
+      IsDefEqStrong.forallEDF (ihAA' hΓ) (ih1 ⟨hΓ, hAwf⟩) (ih2 ⟨hΓ, hA'wf⟩)
+  | defeqDF _ _ _ ih1 ih2 => exact .defeqDF (ih1 hΓ) (ih2 hΓ)
+  | beta _ _ hA _ _ _ _ _ ihA ihB ihe ihe' ihBi ihei =>
+    have hAwf := (hA.defeq.levelWF hΓ).1
+    have hΓ' : OnCtx (_ :: _) (fun _ A => A.LevelWF Params.univs) := ⟨hΓ, hAwf⟩
+    have hBi := ihBi hΓ; have hei := ihei hΓ
+    simp only [mk, mk_instExpr] at hBi hei ⊢
+    exact .beta (ihe hΓ') (ihe' hΓ)
+      (.appDF (ihA hΓ) (ihB hΓ') (.lamDF (ihA hΓ) (ihB hΓ') (ihe hΓ') (ihe hΓ')) (ihe' hΓ) hBi) hei
+  | @eta Γ A u B v e _ _ hA _ _ _ _ _ ihA ihB ihB' ihe ihe' ihA' =>
+    have hAwf := (hA.defeq.levelWF hΓ).1
+    have hΓ' : OnCtx (A :: Γ) (fun _ A => A.LevelWF Params.univs) := ⟨hΓ, hAwf⟩
+    have hΓ'' : OnCtx (A.lift :: A :: Γ) (fun _ A => A.LevelWF Params.univs) := ⟨hΓ', hAwf.liftN⟩
+    have h1 := ihA' hΓ'
+    have h2 := ihB' hΓ''
+    have h3 := ihe' hΓ'
+    have h4 := ihB hΓ'
+    simp only [List.map_cons, mk, mk_lift, VExpr.liftN_one_one, mk_lift'] at h1 h2 h3 h4 ⊢
+    have hbody := IsDefEqStrong.appDF h1 h2 h3 (.bvar .zero h1)
+      (lift_cons_skip_inst_bvar0.symm ▸ h4)
+    rw [lift_cons_skip_inst_bvar0] at hbody
+    exact .eta (ihe hΓ) (.lamDF (ihA hΓ) h4 hbody hbody)
+  | proofIrrel _ _ _ ih1 ih2 ih3 =>
+    simpa only [mk, SLevel.mk_zero] using IsDefEqStrong.proofIrrel (ih1 hΓ) (ih2 hΓ) (ih3 hΓ)
+  | @extra df ls u Γ h1 h2 h3 _ _ _ _ _ _ _ _ _ ih8 ih9 =>
+    have hl := ih8 hΓ; have hr := ih9 hΓ
+    simp only [← mkInst_map_mk h2] at hl hr ⊢
+    exact .extra h1 (by simpa using h3) hl hr
+
+/-- Strong-to-strong translation. -/
+theorem _root_.Lean4Lean.VEnv.IsDefEqStrong.mkS (hctor : CtorProvider)
+    (H : Params.env.IsDefEqStrong Params.univs Γ e₁ e₂ A)
+    (hΓ : OnCtx Γ (fun _ A => A.LevelWF Params.univs)) :
+    IsDefEqStrong Params.env (Γ.map mk) (mk e₁) (mk e₂) (mk A) :=
+  H.mkSE hctor hΓ
+
+/-! ## `EnvStrongS` from `Params.henv` plus a ctor provider -/
+
+/-- Strong typing of a constant's type at `VLevel` representatives, from `Params.henv`. -/
+theorem constType_strong (hctor : CtorProvider) (h1 : env.constants c = some ci)
+    (hvs : ∀ l ∈ vs, l.WF univs) :
+    ∃ u : VLevel, env.HasType univs [] (ci.type.instL vs) (.sort u) ∧
+      [] ⊢ₛ mkInst (vs.map SLevel.mk) ci.type : .sort (SLevel.mk u) := by
+  have ⟨u, hu⟩ := Params.henv.constWF h1
+  have hS := (VEnv.IsDefEq.strong Params.henv (by trivial) hu).instL hvs
+  have := hS.mkS hctor (by trivial)
+  rw [mkInst_map_mk hvs]
+  exact ⟨_, VEnv.IsDefEq.instL hvs hu, this⟩
+
+theorem EnvStrongS.of_provider (hctor : CtorProvider) : EnvStrongS where
+  const := fun {c ci ls} h1 _ => by
+    obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
+    have ⟨_, _, h⟩ := constType_strong hctor h1 hvs
+    exact ⟨_, h⟩
+  ctor := fun {c ci ls} h1 h2 cl => by
+    obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
+    have ⟨_, hV, hT⟩ := constType_strong hctor h1 hvs
+    exact hctor h1 hvs (by simpa using h2) hV hT cl
+  defeq := fun {df ls} h1 _ => by
+    obtain ⟨vs, hvs, rfl⟩ := SLevel.exists_map_mk ls
+    have ⟨hl, hr⟩ := Params.henv.defEqWF h1
+    have hl' := ((VEnv.IsDefEq.strong Params.henv (by trivial) hl).instL hvs).mkS hctor (by trivial)
+    have hr' := ((VEnv.IsDefEq.strong Params.henv (by trivial) hr).instL hvs).mkS hctor (by trivial)
+    simp only [mkInst_map_mk hvs]
+    exact ⟨hl', hr'⟩
+
+theorem SLevel.mk_ne_zero (hu : u.WF univs) (h : ∀ ns, u.eval ns ≠ 0) : SLevel.mk u ≠ .zero := by
+  intro h'
+  have := congrFun (congrArg Subtype.val h') []
+  rw [SLevel.mk_val hu] at this
+  exact h [] this
+
+/-- The provider given by the syntactic `Params` fields, over any `E ≤ Params.env`:
+the ctor equation is reflexivity. -/
+theorem CtorProviderE.synE {E : VEnv} (hE : E ≤ Params.env) : CtorProviderE E := by
+  intro Γ c ci vs u h1 hvs hlen hV hT cl
+  obtain ⟨I, Ts, args, hTs, hI, heq⟩ := ctor_syn cl.cl.2.2 cl.cl.2.1 (hE.1 h1)
+  have hu : u.WF univs := (hV.levelWF ⟨⟩).2.2
+  have hrhs : mkInst (vs.map SLevel.mk) ci.type =
+      (Ts.map fun T => mk (T.instL vs)).foldr .forallE
+        ((args.map fun A => mk (A.instL vs)).foldr (fun A acc => acc.app A)
+          (.const I (vs.map SLevel.mk))) := by
+    rw [mkInst_map_mk hvs, heq, mk_instL_foldr_forallE, mk_instL_foldr_app]
+    simp only [VExpr.instL, mk, VLevel.inst_map_id hlen]
+  refine ⟨⟨I, Ts.map fun T => mk (T.instL vs), args.map fun A => mk (A.instL vs), SLevel.mk u,
+    by simp [hTs], by simpa using hI,
+    SLevel.mk_ne_zero hu (ctor_sort cl.cl.2.2 cl.cl.2.1 (hE.1 h1) hvs hlen (hV.mono hE))⟩, ?_⟩
+  show IsDefEqStrong E _ _ ((Ts.map fun T => mk (T.instL vs)).foldr .forallE
+    ((args.map fun A => mk (A.instL vs)).foldr (fun A acc => acc.app A)
+      (.const I (vs.map SLevel.mk)))) _
+  rw [← hrhs]; exact hT
+
+/-- The provider given by the syntactic `Params` fields: the ctor equation is reflexivity. -/
+theorem CtorProvider.syn : CtorProvider := CtorProviderE.synE VEnv.LE.rfl
+
+
+/-- Strong typing of the whole environment, from `Params.henv` and the syntactic ctor fields. -/
+theorem Params.envStrongS : EnvStrongS := .of_provider CtorProvider.syn
+
+/-- Every weak derivation in a well-formed context is strong. -/
+theorem IsDefEq.strong (hΓ : ⊢ Γ) (H : Γ ⊢ e1 ≡ e2 : A) : IsDefEqStrong Params.env Γ e1 e2 A :=
+  H.strongS Params.envStrongS (.of_wf Params.envStrongS hΓ)
+
+theorem IsDefEq.isType (hΓ : ⊢ Γ) (H : Γ ⊢ e1 ≡ e2 : A) : ∃ u, Γ ⊢ A : .sort u :=
+  let ⟨u, h⟩ := (H.strong hΓ).isType'; ⟨u, h.defeq⟩
 
 theorem IsDefEq.weak' (W : Ctx.Lift' ρ Γ Γ') (H : Γ ⊢ e1 ≡ e2 : A) :
     Γ' ⊢ e1.lift' ρ ≡ e2.lift' ρ : A.lift' ρ := by
@@ -805,7 +2729,7 @@ theorem IsDefEq.weak' (W : Ctx.Lift' ρ Γ Γ') (H : Γ ⊢ e1 ≡ e2 : A) :
   | trans _ _ ih1 ih2 => exact .trans (ih1 W) (ih2 W)
   | trans' _ _ ih1 ih2 => exact .trans' (ih1 W) (ih2 W)
   | sort => exact .sort
-  | const h1 h2 => rw [(henv.closedC h1).mkS.instL.lift'_eq .zero]; exact .const h1 h2
+  | const h1 h2 => rw [(henv.closedC h1).mkInstS.lift'_eq .zero]; exact .const h1 h2
   | appDF _ _ ih1 ih2 => exact SExpr.lift'_inst_hi .. ▸ .appDF (ih1 W) (ih2 W)
   | lamDF _ _ ih1 ih2 => exact .lamDF (ih1 W) (ih2 W.cons)
   | forallEDF _ _ ih1 ih2 => exact .forallEDF (ih1 W) (ih2 W.cons)
@@ -817,12 +2741,144 @@ theorem IsDefEq.weak' (W : Ctx.Lift' ρ Γ Γ') (H : Γ ⊢ e1 ≡ e2 : A) :
   | proofIrrel _ _ _ ih1 ih2 ih3 => exact .proofIrrel (ih1 W) (ih2 W) (ih3 W)
   | extra h1 h2 =>
     have ⟨⟨hA1, _⟩, hA2, hA3⟩ := henv.closed.2 h1
-    rw [hA1.mkS.instL.lift'_eq .zero, hA2.mkS.instL.lift'_eq .zero, hA3.mkS.instL.lift'_eq .zero]
+    rw [hA1.mkInstS.lift'_eq .zero, hA2.mkInstS.lift'_eq .zero, hA3.mkInstS.lift'_eq .zero]
     exact .extra h1 h2
 
+/--
+`Ctx.SubstEq Γ₀ σ σ' Γ`: `σ` and `σ'` are pointwise definitionally equal substitutions
+from `Γ` into `Γ₀`. The base case is the identity on a common suffix, and `weak` lets the
+target context grow, which is what makes `lift` (going under a binder) derivable.
+-/
+inductive Ctx.SubstEq : List SExpr → SExpr.Subst → SExpr.Subst → List SExpr → Prop where
+  | nil : Ctx.SubstEq Γ₀ .id .id Γ₀
+  | weak : Ctx.SubstEq Γ₀ σ σ' Γ →
+    Ctx.SubstEq (B :: Γ₀) (σ.lift_r (.skip .refl)) (σ'.lift_r (.skip .refl)) Γ
+  | cons : Ctx.SubstEq Γ₀ σ.tail σ'.tail Γ →
+    Γ ⊢ A : .sort u →
+    Γ₀ ⊢ σ.head ≡ σ'.head : A.subst σ.tail →
+    Ctx.SubstEq Γ₀ σ σ' (A :: Γ)
+
+theorem Ctx.SubstEq.left (W : Ctx.SubstEq Γ₀ σ σ' Γ) : Ctx.Subst (· ⊢ · : ·) Γ₀ σ Γ := by
+  induction W with
+  | nil => exact .id .bvar fun W h => h.weak' W
+  | weak _ ih => exact ih.lift_r (fun W h => h.weak' W) .one
+  | cons _ _ h ih => exact .cons ih h.hasType.1
+
+theorem Ctx.SubstEq.lookup (W : Ctx.SubstEq Γ₀ σ σ' Γ) :
+    Lookup Γ i A → Γ₀ ⊢ σ i ≡ σ' i : A.subst σ := by
+  induction W generalizing i A with
+  | nil => intro h; rw [subst_id]; exact IsDefEq.bvar h
+  | @weak _ _ _ _ B _ ih =>
+    intro h
+    have := (ih h).weak' (Ctx.Lift'.one (A := B))
+    rwa [lift'_subst] at this
+  | cons _ _ h ih =>
+    intro hl
+    cases hl with
+    | zero => rw [lift_subst]; exact h
+    | succ hl => rw [lift_subst]; exact ih hl
+
+theorem Ctx.SubstEq.lift (W : Ctx.SubstEq Γ₀ σ σ' Γ) (hA : Γ ⊢ A : .sort u) :
+    Ctx.SubstEq (A.subst σ :: Γ₀) σ.lift σ'.lift (A :: Γ) := by
+  refine .cons (Subst.lift_tail_eq σ ▸ Subst.lift_tail_eq σ' ▸ W.weak) hA ?_
+  show (A.subst σ :: Γ₀) ⊢ .bvar 0 ≡ .bvar 0 : A.subst σ.lift.tail
+  rw [Subst.lift_tail_eq, ← lift'_subst]
+  exact .bvar .zero
+
+theorem Ctx.SubstEq.strong (W : Ctx.SubstEq Γ₀ σ σ' Γ)
+    (hΓ : ⊢ Γ) (hΓ₀ : ⊢ Γ₀) : Ctx.SubstEqS Γ₀ σ σ' Γ := by
+  induction W with
+  | nil => exact .id (.of_wf Params.envStrongS hΓ)
+  | weak _ ih => exact .skip (ih hΓ hΓ₀.1)
+  | cons _ hA hhead ih =>
+    exact .cons (ih hΓ.1 hΓ₀) (hA.strong hΓ.1)
+      (hhead.strong hΓ₀)
+
+
+/-- With the identity-based `nil`, well-formedness of the target context gives that of the
+source context. -/
+theorem Ctx.SubstEq.wf (W : Ctx.SubstEq Γ₀ σ σ' Γ) (hΓ₀ : ⊢ Γ₀) : ⊢ Γ := by
+  induction W with
+  | nil => exact hΓ₀
+  | weak _ ih => exact ih hΓ₀.1
+  | cons _ hA _ ih => exact ⟨ih hΓ₀, _, hA⟩
+
+/-- Simultaneous substitution of a defeq pair of substitutions into a defeq. -/
+theorem IsDefEq.subst (hΓ₀ : ⊢ Γ₀)
+    (W : Ctx.SubstEq Γ₀ σ σ' Γ) (H : Γ ⊢ e1 ≡ e2 : A) :
+    Γ₀ ⊢ e1.subst σ ≡ e2.subst σ' : A.subst σ :=
+  ((H.strong (W.wf hΓ₀)).subst (W.strong (W.wf hΓ₀) hΓ₀)).defeq
+
+theorem Ctx.SubstEq.symm (W : Ctx.SubstEq Γ₀ σ σ' Γ) (hΓ₀ : ⊢ Γ₀) : Ctx.SubstEq Γ₀ σ' σ Γ := by
+  induction W with
+  | nil => exact .nil
+  | weak _ ih => exact .weak (ih hΓ₀.1)
+  | cons W hA h ih => exact .cons (ih hΓ₀) hA (.defeqDF (.subst hΓ₀ W hA) h.symm)
+
+
+/-! ### `defeqDF_l'` directly, with no hypotheses -/
+
+/-- `k`-fold `lift`. -/
+def liftK (e : SExpr) : Nat → SExpr
+  | 0 => e
+  | k+1 => (liftK e k).lift
+
+theorem liftK_lift (e : SExpr) : ∀ k, liftK e.lift k = liftK e (k+1)
+  | 0 => rfl
+  | k+1 => congrArg SExpr.lift (liftK_lift e k)
+
+theorem liftK_sort : ∀ k, liftK (.sort u) k = .sort u
+  | 0 => rfl
+  | k+1 => congrArg SExpr.lift (liftK_sort k)
+
+theorem IsDefEq.weak_append (H : Γ ⊢ e1 ≡ e2 : A) :
+    ∀ Δ : List SExpr, Δ ++ Γ ⊢ liftK e1 Δ.length ≡ liftK e2 Δ.length : liftK A Δ.length
+  | [] => H
+  | _ :: Δ => (H.weak_append Δ).weak' .one
+
+theorem Lookup.append_self : ∀ Δ : List SExpr, Lookup (Δ ++ A :: Γ) Δ.length (liftK A (Δ.length+1))
+  | [] => .zero
+  | _ :: Δ => .succ (append_self Δ)
+
+theorem Lookup.append_cons : ∀ Δ : List SExpr, Lookup (Δ ++ A :: Γ) i B →
+    Lookup (Δ ++ A' :: Γ) i B ∨ (i = Δ.length ∧ B = liftK A (Δ.length+1))
+  | [], h => by
+    cases h with
+    | zero => exact .inr ⟨rfl, rfl⟩
+    | succ h => exact .inl (.succ h)
+  | _ :: Δ, h => by
+    cases h with
+    | zero => exact .inl .zero
+    | succ h =>
+      obtain h | ⟨rfl, rfl⟩ := append_cons Δ h
+      · exact .inl (.succ h)
+      · exact .inr ⟨rfl, rfl⟩
+
 theorem IsDefEq.defeqDF_l' (h1 : Γ ⊢ A ≡ A' : .sort u)
-    (h2 : Δ++A::Γ ⊢ e1 ≡ e2 : B) : Δ++A'::Γ ⊢ e1 ≡ e2 : B := by
-  sorry
+    (h2 : Δ ++ A :: Γ ⊢ e1 ≡ e2 : B) : Δ ++ A' :: Γ ⊢ e1 ≡ e2 : B := by
+  generalize hΓ' : Δ ++ A :: Γ = Γ' at h2
+  induction h2 generalizing Δ with
+  | bvar h =>
+    subst hΓ'
+    obtain h | ⟨rfl, rfl⟩ := Lookup.append_cons Δ h
+    · exact .bvar h
+    · have := ((h1.weak' (Ctx.Lift'.one (A := A'))).weak_append Δ)
+      rw [liftK_lift, liftK_lift, lift'_sort, liftK_sort] at this
+      exact .defeqDF this.symm (.bvar (Lookup.append_self Δ))
+  | symm _ ih => exact .symm (ih hΓ')
+  | trans _ _ ih1 ih2 => exact .trans (ih1 hΓ') (ih2 hΓ')
+  | trans' _ _ ih1 ih2 => exact .trans' (ih1 hΓ') (ih2 hΓ')
+  | sort => exact .sort
+  | const h1 h2 => exact .const h1 h2
+  | appDF _ _ ih1 ih2 => exact .appDF (ih1 hΓ') (ih2 hΓ')
+  | lamDF _ _ ih1 ih2 => exact .lamDF (ih1 hΓ') (ih2 (Δ := _ :: Δ) (by rw [← hΓ']; rfl))
+  | forallEDF _ _ ih1 ih2 => exact .forallEDF (ih1 hΓ') (ih2 (Δ := _ :: Δ) (by rw [← hΓ']; rfl))
+  | defeqDF _ _ ih1 ih2 => exact .defeqDF (ih1 hΓ') (ih2 hΓ')
+  | beta _ _ ih1 ih2 => exact .beta (ih1 (Δ := _ :: Δ) (by rw [← hΓ']; rfl)) (ih2 hΓ')
+  | eta _ ih => exact .eta (ih hΓ')
+  | proofIrrel _ _ _ ih1 ih2 ih3 => exact .proofIrrel (ih1 hΓ') (ih2 hΓ') (ih3 hΓ')
+  | extra h1 h2 => exact .extra h1 h2
+
 
 theorem IsDefEq.defeqDF_l (h1 : Γ ⊢ A ≡ A' : .sort u)
     (h2 : A::Γ ⊢ e1 ≡ e2 : B) : A'::Γ ⊢ e1 ≡ e2 : B :=
@@ -943,34 +2999,307 @@ theorem IsDefEq.defeqDFC' (h1 : IsDefEqCtx Γ₀ Γ₁ Γ₂)
 theorem IsDefEq.defeqDFC (h1 : IsDefEqCtx Γ₀ Γ₁ Γ₂)
     (h2 : Γ₁ ⊢ e₁ ≡ e₂ : A) : Γ₂ ⊢ e₁ ≡ e₂ : A := .defeqDFC' (Δ := []) h1 h2
 
+omit [Params] in
+theorem _root_.Lean4Lean.Subpattern.varN_const (H : Subpattern p (.varN (.const c) n)) :
+    ∃ n, p = .varN (.const c) n := by
+  generalize eq : Pattern.varN (.const c) n = p' at H
+  induction H generalizing n with
+  | refl => exact ⟨_, eq.symm⟩
+  | appL | appR => cases n <;> cases eq
+  | varL _ ih => cases n <;> cases eq; exact ih rfl
+
+theorem _root_.Lean4Lean.Pattern.MatchesS.determ
+    (h1 : Pattern.MatchesS p e m1 m2) (h2 : Pattern.MatchesS p e m1' m2') :
+    m1 = m1' ∧ m2 = m2' := by
+  induction h1 generalizing m1' with
+  | const => let .const := h2; simp
+  | app l1 l2 ih1 ih2 => let .app r1 r2 := h2; simp [ih1 r1, ih2 r2]; rfl
+  | var l1 ih1 => let .var r1 := h2; simp [ih1 r1]
+
+theorem _root_.Lean4Lean.Pattern.matchesS_inter {p q : Pattern} {e : SExpr}
+    {m1 m3 : List SLevel} {m2 : p.Path → SExpr} {m4 : q.Path → SExpr}
+    (hp : p.MatchesS e m1 m2) (hq : q.MatchesS e m3 m4) : ∃ r, p.inter q = some r := by
+  induction hp generalizing q m3 m4 with
+  | const => cases hq; simp [Pattern.inter]
+  | var _ ih =>
+    cases hq with
+    | var h => obtain ⟨_, h⟩ := ih h; simp [Pattern.inter, h]
+    | app h _ => obtain ⟨_, h⟩ := ih h; simp [Pattern.inter, h]
+  | app _ _ ihf iha =>
+    cases hq with
+    | var h => obtain ⟨_, h⟩ := ihf h; simp [Pattern.inter, h]
+    | app hf ha =>
+      obtain ⟨_, hf⟩ := ihf hf; obtain ⟨_, ha⟩ := iha ha
+      simp [Pattern.inter, hf, ha]
+
+theorem _root_.Lean4Lean.Pattern.MatchesS.varN_const_lam
+    (h : Pattern.MatchesS (.varN (.const c) n) (.lam A b) m1 m2) : False := by
+  cases n <;> simp only [Pattern.varN] at h <;> nomatch h
+
+omit [Params] in
+theorem _root_.Lean4Lean.Pattern.ne_app_self {f a : Pattern} : f ≠ .app f a := by
+  intro h; have := congrArg sizeOf h; simp at this; omega
+
+omit [Params] in
+theorem _root_.Lean4Lean.Pattern.ne_app_self_r {f a : Pattern} : a ≠ .app f a := by
+  intro h; have := congrArg sizeOf h; simp at this
+
+/-- In a simple pattern the only `app` subpattern is the pattern itself. -/
+theorem Params.simple_app (H : Pat p r) (h : Subpattern (.app p₁ p₂) p) : .app p₁ p₂ = p := by
+  obtain ⟨_|_, rfl⟩ := pat_simple H <;> cases h
+  · rfl
+  · obtain ⟨n, h⟩ := Subpattern.varN_const ‹_›; cases n <;> cases h
+  · obtain ⟨n, h⟩ := Subpattern.varN_const ‹_›; cases n <;> cases h
+
+/-! ### Spines -/
+
+/-- `h X₁ … Xₖ` in spine order. -/
+def spine (h : SExpr) (Xs : List SExpr) : SExpr := Xs.foldl .app h
+
+@[simp] theorem spine_nil : spine h [] = h := rfl
+@[simp] theorem spine_cons : spine h (X :: Xs) = spine (.app h X) Xs := rfl
+theorem spine_append : spine h (Xs ++ Ys) = spine (spine h Xs) Ys := List.foldl_append
+@[simp] theorem spine_snoc : spine h (Xs ++ [X]) = .app (spine h Xs) X := spine_append
+
+theorem spine_eq_app (hne : Xs ≠ []) :
+    spine h Xs = .app (spine h Xs.dropLast) (Xs.getLast hne) := by
+  rw [← spine_snoc, List.dropLast_concat_getLast]
+
+/-- Head of an application spine. -/
+def headE : SExpr → SExpr
+  | .app f _ => headE f
+  | e => e
+
+/-- Arguments of an application spine, in spine order. -/
+def args : SExpr → List SExpr
+  | .app f a => args f ++ [a]
+  | _ => []
+
+@[simp] theorem headE_app : headE (.app f a) = headE f := rfl
+@[simp] theorem headE_const : headE (.const c ls) = .const c ls := rfl
+@[simp] theorem args_app : args (.app f a) = args f ++ [a] := rfl
+@[simp] theorem args_const : args (.const c ls) = [] := rfl
+
+theorem headE_spine : ∀ (Xs : List SExpr) (h), headE (spine h Xs) = headE h
+  | [], _ => rfl
+  | X :: Xs, h => headE_spine Xs (.app h X)
+
+theorem args_spine : ∀ (Xs : List SExpr) (h), args (spine h Xs) = args h ++ Xs
+  | [], _ => by simp
+  | X :: Xs, h => by simp [args_spine Xs (.app h X)]
+
+/-- `spine (const c ls) Xs` is injective in `c`, `ls` and `Xs`. -/
+theorem spine_inj {c c' : Name} {ls ls' : List SLevel} {Xs Xs' : List SExpr}
+    (H : spine (.const c ls) Xs = spine (.const c' ls') Xs') : c = c' ∧ ls = ls' ∧ Xs = Xs' := by
+  have h1 := congrArg headE H; have h2 := congrArg args H
+  simp only [headE_spine, headE_const, args_spine, args_const, List.nil_append] at h1 h2
+  cases h1; exact ⟨rfl, rfl, h2⟩
+
+/-! ### Pattern heads -/
+
+/-- A term matching a pattern is a spine headed by the pattern's head constant. -/
+theorem _root_.Lean4Lean.Pattern.MatchesS.headE {p : Pattern} {e : SExpr} {m1 m2}
+    (H : p.MatchesS e m1 m2) : ∃ ls, headE e = .const p.head ls := by
+  induction H with
+  | const => exact ⟨_, rfl⟩
+  | var _ ih | app _ _ ih _ => exact ih
+
+theorem _root_.Lean4Lean.Pattern.MatchesS.head_eq {p : Pattern} {e : SExpr} {m1 m2}
+    (H : p.MatchesS e m1 m2) (he : headE e = .const c ls) : p.head = c := by
+  obtain ⟨_, h⟩ := H.headE; cases he.symm.trans h; rfl
+
+theorem Params.Pat.head_symb (h : Pat p r) : ∃ k, classify p.head = some (.symb k) :=
+  Pattern.WF.head_symb p (pat_wf h)
+
+/-- No rule matches a spine whose head constant is not classified `symb`. -/
+theorem _root_.Lean4Lean.Pattern.MatchesS.not_symb {p : Pattern} {e : SExpr} {m1 m2}
+    (h2 : p.MatchesS e m1 m2) (hc : ∀ k, classify c ≠ some (.symb k))
+    (hp : ∃ k, classify p.head = some (.symb k)) (he : headE e = .const c ls) : False :=
+  have ⟨_, h⟩ := hp
+  hc _ (h2.head_eq he ▸ h)
+
+theorem _root_.Lean4Lean.Pattern.matchesS_lift' {p : Pattern} {e : SExpr} {m1 m2'} :
+    p.MatchesS (e.lift' ρ) m1 m2' ↔
+    ∃ m2, p.MatchesS e m1 m2 ∧ ∀ x, m2' x = (m2 x).lift' ρ := by
+  constructor
+  · intro h; generalize eq : e.lift' ρ = e' at h
+    induction h generalizing e with
+    | const => cases e <;> cases eq; exact ⟨_, .const, nofun⟩
+    | var _ ih =>
+      cases e <;> cases eq
+      have ⟨_, l1, l2⟩ := ih rfl
+      refine ⟨_, .var l1, ?_⟩
+      rintro (_|_) <;> solve_by_elim
+    | app _ _ ih1 ih2 =>
+      cases e <;> cases eq
+      have ⟨_, l1, l2⟩ := ih1 rfl
+      have ⟨_, r1, r2⟩ := ih2 rfl
+      refine ⟨_, .app l1 r1, ?_⟩
+      rintro (_|_) <;> solve_by_elim
+  · intro ⟨m2, h1, h2⟩
+    induction h1 with
+    | const => exact Pattern.MatchesS.congr .const nofun
+    | var _ ih =>
+      refine Pattern.MatchesS.congr (ih (h2 <| some ·)).var fun x => ?_
+      cases x <;> simp [h2 none]
+    | app _ _ ih1 ih2 =>
+      refine Pattern.MatchesS.congr ((ih1 (h2 <| .inl ·)).app (ih2 (h2 <| .inr ·))) fun x => ?_
+      cases x <;> rfl
+
+theorem _root_.Lean4Lean.Pattern.MatchesS.subst {p : Pattern} {e : SExpr} {m1 m2}
+    (H : p.MatchesS e m1 m2) : p.MatchesS (e.subst σ) m1 fun x => (m2 x).subst σ := by
+  induction H with
+  | const => exact Pattern.MatchesS.congr .const nofun
+  | var _ ih => refine Pattern.MatchesS.congr ih.var fun x => ?_; cases x <;> rfl
+  | app _ _ ih1 ih2 => refine Pattern.MatchesS.congr (ih1.app ih2) fun x => ?_; cases x <;> rfl
+
+theorem _root_.Lean4Lean.Pattern.RHS.applyS_lift' {p : Pattern} {m1 m2} (r : p.RHS) :
+    (r.applyS m1 m2).lift' ρ = r.applyS m1 fun x => (m2 x).lift' ρ := by
+  induction r with
+  | fixed c h => exact h.mkInstS.lift'_eq .zero
+  | var => rfl
+  | app _ _ ih1 ih2 => simp only [Pattern.RHS.applyS, SExpr.lift', ih1, ih2]
+
+theorem _root_.Lean4Lean.Pattern.RHS.applyS_subst {p : Pattern} {m1 m2} (r : p.RHS) :
+    (r.applyS m1 m2).subst σ = r.applyS m1 fun x => (m2 x).subst σ := by
+  induction r with
+  | fixed c h => exact h.mkInstS.subst_eq nofun
+  | var => rfl
+  | app _ _ ih1 ih2 => simp only [Pattern.RHS.applyS, SExpr.subst, ih1, ih2]
+
+theorem _root_.Lean4Lean.Pattern.Check.defeqsS_lift' {p : Pattern} {m1 m2} (ck : p.Check) :
+    ck.defeqsS m1 (fun x => (m2 x).lift' ρ) =
+    (ck.defeqsS m1 m2).map fun x => (x.1.lift' ρ, x.2.lift' ρ) := by
+  induction ck <;> simp [Pattern.Check.defeqsS, Pattern.RHS.applyS_lift', *]
+
+theorem _root_.Lean4Lean.Pattern.Check.defeqsS_subst {p : Pattern} {m1 m2} (ck : p.Check) :
+    ck.defeqsS m1 (fun x => (m2 x).subst σ) =
+    (ck.defeqsS m1 m2).map fun x => (x.1.subst σ, x.2.subst σ) := by
+  induction ck <;> simp [Pattern.Check.defeqsS, Pattern.RHS.applyS_subst, *]
+
+omit [Params] in
+/-- Packaging the side-condition list of `WHRed.extra`: a list `dfs` of typed defeqs whose
+untyped projection is `l` exists iff every pair in `l` is defeq at some type. -/
+theorem exists_dfs {α β : Type} {P : β → α → Prop} :
+    ∀ {l : List β}, (∀ x ∈ l, ∃ A, P x A) →
+    ∃ dfs : List (α × β), dfs.map (·.2) = l ∧ ∀ A x, (A, x) ∈ dfs → P x A
+  | [], _ => ⟨[], rfl, nofun⟩
+  | x :: l, h => by
+    obtain ⟨A, hA⟩ := h x (.head _)
+    obtain ⟨dfs, h1, h2⟩ := exists_dfs fun y hy => h y (.tail _ hy)
+    refine ⟨(A, x) :: dfs, by simp [h1], fun A' y h => ?_⟩
+    rcases List.mem_cons.1 h with h | h
+    · cases h; exact hA
+    · exact h2 _ _ h
+
+/-- `e` is a proper prefix of the left-hand side of some rewrite rule, whose next argument is
+a pattern position (for a simple iota pattern `rec a₁ … aₘ (ctor b₁ … bₙ)`: `e = rec a₁ … aₘ`,
+so the next argument is the major premise). -/
+def IsMajorPremise (e : SExpr) : Prop :=
+  ∃ p, (∃ r, Pat p r) ∧ ∃ p₁ p₂, Subpattern (.app p₁ p₂) p ∧ ∃ m1 m2, p₁.MatchesS e m1 m2
+
+/-- The intended use: `f` matches the recursor prefix `p₁` of an iota rule `app p₁ p₂`. -/
+theorem IsMajorPremise.mk {p₁ p₂ : Pattern} {r} {m1 : List SLevel} {m2 : p₁.Path → SExpr}
+    (h : Pat (.app p₁ p₂) r) (hm : p₁.MatchesS f m1 m2) : IsMajorPremise f :=
+  ⟨_, ⟨_, h⟩, _, _, .refl, _, _, hm⟩
+
+theorem IsMajorPremise.lift' {e ρ} : IsMajorPremise (e.lift' ρ) ↔ IsMajorPremise e := by
+  constructor <;> intro ⟨_, h1, _, _, h2, _, _, h3⟩
+  · let ⟨_, h4, _⟩ := Pattern.matchesS_lift'.1 h3
+    exact ⟨_, h1, _, _, h2, _, _, h4⟩
+  · exact ⟨_, h1, _, _, h2, _, _, Pattern.matchesS_lift'.2 ⟨_, h3, fun _ => rfl⟩⟩
+
+theorem IsMajorPremise.subst : IsMajorPremise e → IsMajorPremise (e.subst σ)
+  | ⟨_, h1, _, _, h2, _, _, h3⟩ => ⟨_, h1, _, _, h2, _, _, h3.subst⟩
+
+theorem IsMajorPremise.lam : ¬IsMajorPremise (.lam A e)
+  | ⟨_, _, _, _, _, _, _, h⟩ => nomatch h
+
+theorem IsMajorPremise.sort : ¬IsMajorPremise (.sort u)
+  | ⟨_, _, _, _, _, _, _, h⟩ => nomatch h
+
+theorem IsMajorPremise.forallE : ¬IsMajorPremise (.forallE A B)
+  | ⟨_, _, _, _, _, _, _, h⟩ => nomatch h
+
 scoped notation:65 Γ " ⊢ " e1 " ⤳ " e2:36 => WHRed Γ e1 e2
+/-- Weak-head reduction: `app`/`beta`/`extra` plus the `major` rule, which reduces the
+argument of a matched rule prefix (reduction in major-premise position). -/
 inductive WHRed (Γ : List SExpr) : SExpr → SExpr → Prop where
   | app : Γ ⊢ f ⤳ f' → Γ ⊢ .app f a ⤳ .app f' a
+  | major : IsMajorPremise f → Γ ⊢ a ⤳ a' → Γ ⊢ .app f a ⤳ .app f a'
   | beta : Γ ⊢ .app (.lam A e) a ⤳ e.inst a
   | extra : Pat p r → p.MatchesS e m1 m2 → (dfs : List _).map (·.2) = r.2.defeqsS m1 m2 →
     (∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) → Γ ⊢ e ⤳ r.1.applyS m1 m2
 
-theorem WHRed.subst (W : Ctx.Subst HasType Δ σ Γ) :
-    Γ ⊢ e1 ⤳ e2 → Δ ⊢ e1.subst σ ⤳ e2.subst σ
-  | .app h1 => .app (h1.subst W)
-  | .beta => subst_inst ▸ .beta
-  | .extra h1 h2 h3 h4 => sorry
+/-- `extra` with the side conditions stated directly on `defeqsS`. -/
+theorem WHRed.extra' {p : Pattern} {r : p.RHS × p.Check} {m1 : List SLevel} {m2 : p.Path → SExpr}
+    (h1 : Pat p r) (h2 : p.MatchesS e m1 m2)
+    (h3 : ∀ x : SExpr × SExpr, x ∈ r.2.defeqsS m1 m2 → ∃ A, Γ ⊢ x.1 ≡ x.2 : A) :
+    Γ ⊢ e ⤳ r.1.applyS m1 m2 :=
+  let ⟨_, h4, h5⟩ := exists_dfs h3
+  .extra h1 h2 h4 fun _ _ _ h => h5 _ _ h
 
-theorem WHRed.weak' (W : Ctx.Lift' ρ Γ Γ') :
-    Γ ⊢ e1 ⤳ e2 → Γ' ⊢ e1.lift' ρ ⤳ e2.lift' ρ
-  | .app h1 => .app (h1.weak' W)
-  | .beta => by rw [SExpr.lift'_inst_hi]; exact .beta
-  | .extra h1 h2 h3 h4 => sorry
+theorem WHRed.extra_inv {p : Pattern} {r : p.RHS × p.Check} {m1 : List SLevel} {m2 : p.Path → SExpr}
+    {dfs : List (SExpr × SExpr × SExpr)} (h3 : dfs.map (·.2) = r.2.defeqsS m1 m2)
+    (h4 : ∀ a b A, (A, a, b) ∈ dfs → Γ ⊢ a ≡ b : A) :
+    ∀ x : SExpr × SExpr, x ∈ r.2.defeqsS m1 m2 → ∃ A, Γ ⊢ x.1 ≡ x.2 : A := by
+  intro x hx; rw [← h3] at hx
+  obtain ⟨⟨A, a, b⟩, hm, rfl⟩ := List.mem_map.1 hx
+  exact ⟨A, h4 _ _ _ hm⟩
 
-theorem WHRed.weakU_inv (W : Ctx.Lift' ρ Γ Γ') (H : Γ' ⊢ e1.lift' ρ ⤳ e2') :
-    ∃ e2, e2' = e2.lift' ρ ∧ Γ ⊢ e1 ⤳ e2 := by
+/-- Substitution. The `extra` case needs the side-condition defeqs to be substitutable, which
+is abstracted as `hdf` (for `Ctx.SubstEq Δ σ σ Γ` it is `IsDefEq.subst`). -/
+theorem WHRed.subst
+    (hdf : ∀ {a b A}, Γ ⊢ a ≡ b : A → Δ ⊢ a.subst σ ≡ b.subst σ : A.subst σ)
+    (H : Γ ⊢ e1 ⤳ e2) : Δ ⊢ e1.subst σ ⤳ e2.subst σ := by
+  induction H with
+  | app _ ih => exact .app ih
+  | major h1 _ ih => exact .major h1.subst ih
+  | beta => exact subst_inst ▸ .beta
+  | extra h1 h2 h3 h4 =>
+    rw [Pattern.RHS.applyS_subst]
+    refine .extra' h1 h2.subst fun x hx => ?_
+    rw [Pattern.Check.defeqsS_subst] at hx
+    obtain ⟨y, hy, rfl⟩ := List.mem_map.1 hx
+    have ⟨A, h⟩ := WHRed.extra_inv h3 h4 y hy
+    exact ⟨_, hdf h⟩
+
+theorem WHRed.weak' (W : Ctx.Lift' ρ Γ Γ') (H : Γ ⊢ e1 ⤳ e2) :
+    Γ' ⊢ e1.lift' ρ ⤳ e2.lift' ρ := by
+  induction H with
+  | app _ ih => exact .app ih
+  | major h1 _ ih => exact .major (IsMajorPremise.lift'.2 h1) ih
+  | beta => rw [SExpr.lift'_inst_hi]; exact .beta
+  | extra h1 h2 h3 h4 =>
+    rw [Pattern.RHS.applyS_lift']
+    refine .extra' h1 (Pattern.matchesS_lift'.2 ⟨_, h2, fun _ => rfl⟩) fun x hx => ?_
+    rw [Pattern.Check.defeqsS_lift'] at hx
+    obtain ⟨y, hy, rfl⟩ := List.mem_map.1 hx
+    have ⟨A, h⟩ := WHRed.extra_inv h3 h4 y hy
+    exact ⟨_, h.weak' W⟩
+
+set_option linter.unusedVariables false in
+/-- Inverse weakening. The `extra` case needs strengthening of the side-condition defeqs,
+abstracted as `hinv` (the `SExpr` analogue of `IsDefEqU.weak'_iff` in the `VExpr` theory). -/
+theorem WHRed.weakU_inv (W : Ctx.Lift' ρ Γ Γ')
+    (hinv : ∀ {a b A}, Γ' ⊢ a.lift' ρ ≡ b.lift' ρ : A → ∃ A', Γ ⊢ a ≡ b : A')
+    (H : Γ' ⊢ e1.lift' ρ ⤳ e2') : ∃ e2, e2' = e2.lift' ρ ∧ Γ ⊢ e1 ⤳ e2 := by
   generalize he : e1.lift' ρ = e1' at H
   induction H generalizing e1 with
   | app h1 ih => let .app .. := e1; cases he; obtain ⟨_, rfl, a1⟩ := ih rfl; exact ⟨_, rfl, .app a1⟩
+  | major h1 h2 ih =>
+    let .app .. := e1; cases he; obtain ⟨_, rfl, a1⟩ := ih rfl
+    exact ⟨_, rfl, .major (IsMajorPremise.lift'.1 h1) a1⟩
   | beta =>
     let .app e1 _ := e1; let .lam .. := e1; cases he
     simp [← SExpr.lift'_inst_hi, SExpr.lift'_inj]; exact .beta
-  | extra => sorry
+  | extra h1 h2 h3 h4 =>
+    subst he
+    obtain ⟨m2, h5, h6⟩ := Pattern.matchesS_lift'.1 h2; cases funext h6
+    refine ⟨_, (Pattern.RHS.applyS_lift' _).symm, .extra' h1 h5 fun x hx => ?_⟩
+    have ⟨A, h⟩ := WHRed.extra_inv h3 h4 (x.1.lift' ρ, x.2.lift' ρ) <| by
+      rw [Pattern.Check.defeqsS_lift']; exact List.mem_map.2 ⟨x, hx, rfl⟩
+    exact hinv h
 
 def WHNF (Γ : List SExpr) (e : SExpr) := ∀ e', ¬Γ ⊢ e ⤳ e'
 
@@ -978,32 +3307,129 @@ theorem WHNF.lam : WHNF Γ (.lam A e) := nofun
 theorem WHNF.sort : WHNF Γ (.sort A) := nofun
 theorem WHNF.forallE : WHNF Γ (.forallE A B) := nofun
 
+/-- A term matching a *strict* subpattern of a rule is in whnf. The `major` case is closed by
+`pat_uniq` alone: the major-premise prefix `f` matches the prefix `p₁'` of some rule
+`p' = app p₁' p₂'`, and also `varN (const c) n`; so `p'` intersects the strict subpattern
+`varN (const c) (n+1)` of `p`, forcing `p' = varN … (n+1)`, which is a `var`, contradicting
+`p' = app _ _`. -/
+theorem WHNF.subpattern
+    (h1 : Pat p r) (h2 : Subpattern p₁ p) (h3 : p₁ ≠ p) (h4 : p₁.MatchesS e m1 m2) :
+    WHNF Γ e := by
+  intro _ H2
+  obtain ⟨c, n, rfl⟩ : ∃ c n, p₁ = .varN (.const c) n := by
+    obtain ⟨_|_, rfl⟩ := pat_simple h1 <;> cases h2 <;>
+      first | cases h3 rfl | exact ⟨_, Subpattern.varN_const ‹_›⟩
+  induction H2 generalizing n with
+  | app r1 ih =>
+    let n+1 := n; let .var h4 := h4
+    refine ih _ (.trans (.varL .refl) h2) ?_ h4
+    rintro rfl; have := h2.sizeOf_le; simp [Pattern.varN] at this; omega
+  | major r1 r2 =>
+    let n+1 := n; let .var h4 := h4
+    obtain ⟨p', ⟨_, h1'⟩, p₁', p₂', h2', _, _, h3'⟩ := r1
+    cases Params.simple_app h1' h2'
+    have ⟨q, a1⟩ := Pattern.matchesS_inter h3' h4
+    have a2 : (Pattern.app p₁' p₂').inter (.varN (.const c) (n+1)) = some (.app q p₂') := by
+      simp [Pattern.varN, Pattern.inter, a1]
+    obtain ⟨rfl, eq, -⟩ := pat_uniq h1 h1' h2 a2
+    simp [Pattern.varN] at eq
+  | beta => let n+1 := n; let .var h4 := h4; exact h4.varN_const_lam
+  | extra r1 r2 =>
+    have ⟨_, a1⟩ := Pattern.matchesS_inter r2 h4
+    obtain ⟨rfl, eq, _⟩ := pat_uniq h1 r1 h2 a1
+    exact h3 eq.symm
+
+theorem IsMajorPremise.whnf : IsMajorPremise e → WHNF Γ e := by
+  rintro ⟨p, ⟨_, h1⟩, p₁, p₂, h2, _, _, h3⟩
+  refine .subpattern h1 (.trans (.appL .refl) h2) ?_ h3
+  rintro rfl; exact Pattern.ne_app_self (h2.antisymm (.appL .refl))
+
+theorem WHNF.pat_app_l (h1 : Pat p r) (h2 : p.MatchesS (.app f a) m1 m2) : WHNF Γ f := by
+  obtain ⟨_|_, rfl⟩ := pat_simple h1
+  · let .app h3 _ := h2
+    exact WHNF.subpattern h1 (.appL .refl) Pattern.ne_app_self h3
+  · nomatch h2
+
+theorem WHNF.pat_app_r (h1 : Pat p r) (h2 : p.MatchesS (.app f a) m1 m2) : WHNF Γ a := by
+  obtain ⟨_|_, rfl⟩ := pat_simple h1
+  · let .app _ h3 := h2
+    exact WHNF.subpattern h1 (.appR .refl) Pattern.ne_app_self_r h3
+  · nomatch h2
+
+/-- A spine headed by a constant that is not classified `symb` is weak-head normal: `beta`
+needs a `lam` head, `extra` a `symb`-classified pattern head (`pat_wf`), `major` a
+`symb`-classified rule-prefix head, and `app` a reducible prefix spine. -/
+theorem WHNF.of_headE (hc : ∀ k, classify c ≠ some (.symb k)) :
+    ∀ {e : SExpr} {ls}, headE e = .const c ls → WHNF Γ e
+  | .bvar _, _, h | .sort _, _, h | .lam .., _, h | .forallE .., _, h => by cases h
+  | .const _ _, _, he => fun _ H => by
+    cases H with
+    | extra h1 h2 => exact h2.not_symb hc (Params.Pat.head_symb h1) he
+  | .app f a, ls, he => fun _ H => by
+    cases H with
+    | app H' => exact WHNF.of_headE hc (e := f) he _ H'
+    | major hm _ =>
+      obtain ⟨p, ⟨_, h1⟩, p₁, p₂, h2, _, _, h3⟩ := hm
+      cases Params.simple_app h1 h2
+      exact h3.not_symb hc (Params.Pat.head_symb (p := .app p₁ p₂) h1) he
+    | beta => cases he
+    | extra h1 h2 => exact h2.not_symb hc (Params.Pat.head_symb h1) he
+
+/-- A constructor spine is weak-head normal. -/
+theorem WHNF.ctorSpine (hc : classify c = some (.ctor k)) (Xs : List SExpr) :
+    WHNF Γ (spine (.const c ls) Xs) :=
+  WHNF.of_headE (fun _ h => by cases hc.symm.trans h) (headE_spine _ _)
+
+/-- An inductive-type spine is weak-head normal. -/
+theorem WHNF.indTySpine (hc : classify I = some (.indTy k)) (Xs : List SExpr) :
+    WHNF Γ (spine (.const I ls) Xs) :=
+  WHNF.of_headE (fun _ h => by cases hc.symm.trans h) (headE_spine _ _)
+
 theorem WHRed.determ (H1 : Γ ⊢ e ⤳ e₁) (H2 : Γ ⊢ e ⤳ e₂) : e₁ = e₂ := by
   induction H1 generalizing e₂ with
   | app l1 ih =>
     cases H2 with
     | app r1 => cases ih r1; rfl
+    | major r1 => cases r1.whnf _ l1
     | beta => cases WHNF.lam _ l1
-    | extra => sorry
+    | extra r1 r2 => cases WHNF.pat_app_l r1 r2 _ l1
+  | major l1 l2 ih =>
+    cases H2 with
+    | app r1 => cases l1.whnf _ r1
+    | major _ r2 => cases ih r2; rfl
+    | beta => cases l1.lam
+    | extra r1 r2 => cases WHNF.pat_app_r r1 r2 _ l2
   | beta =>
     cases H2 with
     | app r1 => cases WHNF.lam _ r1
+    | major r1 => cases r1.lam
     | beta => rfl
-    | extra _ r2 => sorry
-  | extra _ l2 =>
+    | extra r1 r2 =>
+      obtain ⟨_|_, rfl⟩ := pat_simple r1
+      · let .app r3 _ := r2; exact r3.varN_const_lam.elim
+      · nomatch r2
+  | extra l1 l2 =>
     cases H2 with
-    | beta => sorry
-    | app => sorry
-    | extra _ r2 => sorry
+    | beta =>
+      obtain ⟨_|_, rfl⟩ := pat_simple l1
+      · let .app l3 _ := l2; exact l3.varN_const_lam.elim
+      · nomatch l2
+    | app r1 => cases WHNF.pat_app_l l1 l2 _ r1
+    | major r1 r2 => cases WHNF.pat_app_r l1 l2 _ r2
+    | extra r1 r2 =>
+      have ⟨_, a1⟩ := Pattern.matchesS_inter r2 l2
+      obtain ⟨rfl, -, ⟨⟩⟩ := pat_uniq l1 r1 .refl a1
+      obtain ⟨rfl, rfl⟩ := l2.determ r2; rfl
 
 def WHRedS (Γ : List SExpr) : SExpr → SExpr → Prop := ReflTransGen (WHRed Γ)
 scoped notation:65 Γ " ⊢ " e1 " ⤳* " e2:36 => WHRedS Γ e1 e2
 
-theorem WHRedS.subst (W : Ctx.Subst HasType Δ σ Γ) (H : Γ ⊢ e1 ⤳* e2) :
-    Δ ⊢ e1.subst σ ⤳* e2.subst σ := by
+theorem WHRedS.subst
+    (hdf : ∀ {a b A}, Γ ⊢ a ≡ b : A → Δ ⊢ a.subst σ ≡ b.subst σ : A.subst σ)
+    (H : Γ ⊢ e1 ⤳* e2) : Δ ⊢ e1.subst σ ⤳* e2.subst σ := by
   induction H with
   | rfl => exact .rfl
-  | tail _ h2 ih => exact .tail ih (h2.subst W)
+  | tail _ h2 ih => exact .tail ih (h2.subst hdf)
 
 theorem WHRedS.defeq (H : Γ ⊢ e1 ⤳* e2) (he : Γ ⊢ e1 : A) : Γ ⊢ e1 ≡ e2 : A := sorry
 
@@ -1018,13 +3444,20 @@ theorem WHRedS.app (H : Γ ⊢ e1 ⤳* e2) : Γ ⊢ e1.app a ⤳* e2.app a := by
   | rfl => exact .rfl
   | tail _ h2 ih => exact .tail ih h2.app
 
-theorem WHRedS.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e1.lift' ρ ⤳* e2') :
-    ∃ e2, e2' = e2.lift' ρ ∧ Γ ⊢ e1 ⤳* e2 := by
+theorem WHRedS.major (H1 : IsMajorPremise f) (H : Γ ⊢ a ⤳* a') :
+    Γ ⊢ f.app a ⤳* f.app a' := by
+  induction H with
+  | rfl => exact .rfl
+  | tail _ h2 ih => exact .tail ih (h2.major H1)
+
+theorem WHRedS.weakU_inv (W : Ctx.Lift' ρ Γ Δ)
+    (hinv : ∀ {a b A}, Δ ⊢ a.lift' ρ ≡ b.lift' ρ : A → ∃ A', Γ ⊢ a ≡ b : A')
+    (H : Δ ⊢ e1.lift' ρ ⤳* e2') : ∃ e2, e2' = e2.lift' ρ ∧ Γ ⊢ e1 ⤳* e2 := by
   induction H with
   | rfl => exact ⟨_, rfl, .rfl⟩
   | tail _ h2 ih =>
     obtain ⟨_, rfl, a1⟩ := ih
-    obtain ⟨_, rfl, a2⟩ := h2.weakU_inv W
+    obtain ⟨_, rfl, a2⟩ := h2.weakU_inv W hinv
     exact ⟨_, rfl, .tail a1 a2⟩
 
 theorem WHRedS.determ_l (H1 : Γ ⊢ e ⤳* e₁) (H2 : Γ ⊢ e ⤳* e₂) (W2 : WHNF Γ e₂) : Γ ⊢ e₁ ⤳* e₂ := by
@@ -1043,6 +3476,16 @@ theorem WHNF.whRedS (W : WHNF Γ e) (H : Γ ⊢ e ⤳* e') : e = e' := by
 theorem WHRedS.determ
     (H1 : Γ ⊢ e ⤳* e₁) (W1 : WHNF Γ e₁)
     (H2 : Γ ⊢ e ⤳* e₂) (W2 : WHNF Γ e₂) : e₁ = e₂ := W1.whRedS (H1.determ_l H2 W2)
+
+theorem WHRedS.ctorSpine_eq (hc : classify c = some (.ctor k))
+    (H : Γ ⊢ spine (.const c ls) Xs ⤳* e) : e = spine (.const c ls) Xs :=
+  ((WHNF.ctorSpine hc Xs).whRedS H).symm
+
+/-- Two constructor spines reached from the same term agree (determinism + spine injectivity). -/
+theorem WHRedS.ctorSpine_determ (hc : classify c = some (.ctor k))
+    (H1 : Γ ⊢ M ⤳* spine (.const c ls) Xs) (H2 : Γ ⊢ M ⤳* spine (.const c ls') Xs') :
+    ls = ls' ∧ Xs = Xs' :=
+  (spine_inj (H1.determ (WHNF.ctorSpine hc Xs) H2 (WHNF.ctorSpine hc Xs'))).2
 
 scoped notation:65 Γ " ⊢ " e1 " ≫ " e2:36 => ParRed Γ e1 e2
 inductive ParRed : List SExpr → SExpr → SExpr → Prop where
@@ -1082,7 +3525,7 @@ inductive InferType : List SExpr → SExpr → SExpr → Prop where
   | bvar : Lookup Γ i A → Γ ⊢ .bvar i ▷ A
   | sort : Γ ⊢ .sort u ▷ .sort (.succ u)
   | const : env.constants c = some ci → ls.length = ci.uvars →
-    Γ ⊢ .const c ls ▷ (SExpr.mk ci.type).instL ls
+    Γ ⊢ .const c ls ▷ SExpr.mkInst ls ci.type
   | app : Γ ⊢ f ▷ F → Γ ⊢ F ⤳* .forallE A B → Γ ⊢ a :↑ A → Γ ⊢ .app f a ▷ B.inst a
   | lam : Γ ⊢ A :↑ .sort u → A::Γ ⊢ body ▷ B → Γ ⊢ .lam A body ▷ .forallE A B
   | forallE : Γ ⊢ A ▷ U → Γ ⊢ U ⤳* .sort u →
@@ -1106,10 +3549,16 @@ theorem InferType.determ (H1 : Γ ⊢ e ▷ A) (H2 : Γ ⊢ e ▷ A') : A = A' :
 theorem InferType.weak' (W : Ctx.Lift' ρ Γ Δ) : Γ ⊢ e ▷ A → Δ ⊢ e.lift' ρ ▷ A.lift' ρ
   | .bvar h => .bvar (h.weak' W)
   | .sort => .sort
-  | .const h1 h2 => by rw [(henv.closedC h1).mkS.instL.lift'_eq .zero]; exact .const h1 h2
+  | .const h1 h2 => by rw [(henv.closedC h1).mkInstS.lift'_eq .zero]; exact .const h1 h2
   | .app h1 h2 h3 => SExpr.lift'_inst_hi .. ▸ .app (h1.weak' W) (h2.weak' W) (h3.weak' W)
   | .lam h1 h2 => .lam (h1.weak' W) (h2.weak' W.cons)
   | .forallE h1 h2 h3 h4 => .forallE (h1.weak' W) (h2.weak' W) (h3.weak' W.cons) (h4.weak' W.cons)
+
+/-- Strengthening of a defeq along a context lift (the `SExpr` analogue of `IsDefEqU.weak'_iff`).
+Pre-existing sorry: this obligation was the `extra` case of `WHRed.weakU_inv` (now its `hinv`
+hypothesis). Only used by the `InferType` lemmas below, which are not on the unique-typing chain. -/
+theorem IsDefEq.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ a.lift' ρ ≡ b.lift' ρ : A) :
+    ∃ A', Γ ⊢ a ≡ b : A' := sorry
 
 theorem InferType.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e.lift' ρ ▷ A') :
     ∃ A, A' = A.lift' ρ ∧ Γ ⊢ e ▷ A := by
@@ -1119,11 +3568,11 @@ theorem InferType.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e.lift' ρ ▷ 
   | sort => let .sort _ := e; cases he; exact ⟨_, rfl, .sort⟩
   | const h1 h2 =>
     let .const .. := e; cases he
-    exact ⟨_, ((henv.closedC h1).mkS.instL.lift'_eq .zero).symm, .const h1 h2⟩
+    exact ⟨_, ((henv.closedC h1).mkInstS.lift'_eq .zero).symm, .const h1 h2⟩
   | app h1 h2 h3 ih =>
     let .app .. := e; cases he
     obtain ⟨_, rfl, a1⟩ := ih W rfl
-    obtain ⟨F, a2, a3⟩ := h2.weakU_inv W; cases F <;> cases a2
+    obtain ⟨F, a2, a3⟩ := h2.weakU_inv W (IsDefEq.weakU_inv W); cases F <;> cases a2
     refine ⟨_, by rw [SExpr.lift'_inst_hi], .app a1 a3 (h3.weak'_inv W)⟩
   | lam h1 h2 ih =>
     let .lam .. := e; cases he
@@ -1132,14 +3581,20 @@ theorem InferType.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e.lift' ρ ▷ 
   | forallE h1 h2 h3 h4 ih1 ih2 =>
     let .forallE .. := e; cases he
     obtain ⟨_, rfl, a1⟩ := ih1 W rfl
-    obtain ⟨U, a2, a3⟩ := h2.weakU_inv W; cases U <;> cases a2
+    obtain ⟨U, a2, a3⟩ := h2.weakU_inv W (IsDefEq.weakU_inv W); cases U <;> cases a2
     obtain ⟨_, rfl, b1⟩ := ih2 W.cons rfl
-    obtain ⟨V, b2, b3⟩ := h4.weakU_inv W.cons; cases V <;> cases b2
+    obtain ⟨V, b2, b3⟩ := h4.weakU_inv W.cons (IsDefEq.weakU_inv W.cons); cases V <;> cases b2
     exact ⟨_, rfl, .forallE a1 a3 b1 b3⟩
 
 theorem InferType.weak'_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e.lift' ρ ▷ A.lift' ρ) : Γ ⊢ e ▷ A := by
   obtain ⟨_, h1, h2⟩ := H.weakU_inv W
   exact SExpr.lift'_inj.1 h1 ▸ h2
+
+/-- Substitution of an `InferType`-typed substitution into a defeq. Pre-existing sorry: this
+obligation was the `extra` case of `WHRed.subst` (now its `hdf` hypothesis); it would follow from
+`IsDefEq.subst` given `InferType.hasType` (itself a sorry). Only used by `InferType.subst`. -/
+theorem IsDefEq.subst_inferType (W : Ctx.Subst InferType Δ σ Γ) (H : Γ ⊢ a ≡ b : A) :
+    Δ ⊢ a.subst σ ≡ b.subst σ : A.subst σ := sorry
 
 theorem InferType.subst (W : Ctx.Subst InferType Δ σ Γ)
     (H : Γ ⊢ e ▷ A) : Δ ⊢ e.subst σ ▷ A.subst σ := by
@@ -1151,15 +3606,18 @@ theorem InferType.subst (W : Ctx.Subst InferType Δ σ Γ)
     case succ i C h => rw [SExpr.lift, SExpr.subst_lift']; exact ih h
   | sort => exact .sort
   | const h1 h2 =>
-    rw [(henv.closedC h1).mkS.instL.subst_eq .zero]
+    rw [(henv.closedC h1).mkInstS.subst_eq .zero]
     exact .const h1 h2
-  | app h1 h2 h3 ih => exact subst_inst ▸ .app (ih W) (h2.subst W) (h3.subst W)
-  | lam h1 h2 ih => exact .lam (h1.subst W) (ih (W.lift .bvar))
+  | app h1 h2 h3 ih =>
+    exact subst_inst ▸ .app (ih W) (h2.subst (IsDefEq.subst_inferType W)) (h3.subst W)
+  | lam h1 h2 ih => exact .lam (h1.subst W) (ih (W.lift .bvar fun W h => h.weak' W))
   | forallE h1 h2 h3 h4 ih1 ih2 =>
-    exact .forallE (ih1 W) (h2.subst W) (ih2 (W.lift .bvar)) (h4.subst (W.lift .bvar))
+    exact .forallE (ih1 W) (h2.subst (IsDefEq.subst_inferType W))
+      (ih2 (W.lift .bvar fun W h => h.weak' W))
+      (h4.subst (IsDefEq.subst_inferType (W.lift .bvar fun W h => h.weak' W)))
 
 theorem InferType.inst (H₀ : Γ ⊢ a ▷ A₀) (H : A₀::Γ ⊢ e ▷ A) :
-    Γ ⊢ e.inst a ▷ A.inst a := .subst (.one H₀) H
+    Γ ⊢ e.inst a ▷ A.inst a := .subst (.one .bvar (fun W h => h.weak' W) H₀) H
 
 def InferTypeS (Γ : List SExpr) (e A : SExpr) := ∃ A', Γ ⊢ e ▷ A' ∧ Γ ⊢ A' ⤳* A
 scoped notation:65 Γ " ⊢ " e1 " ▷* " e2:36 => InferTypeS Γ e1 e2
@@ -1194,7 +3652,7 @@ theorem InferTypeS.weakU_inv (W : Ctx.Lift' ρ Γ Δ) (H : Δ ⊢ e.lift' ρ ▷
     ∃ A, A' = A.lift' ρ ∧ Γ ⊢ e ▷* A := by
   let ⟨_, h1, h2⟩ := H
   obtain ⟨_, rfl, a1⟩ := h1.weakU_inv W
-  obtain ⟨_, rfl, a2⟩ := h2.weakU_inv W
+  obtain ⟨_, rfl, a2⟩ := h2.weakU_inv W (IsDefEq.weakU_inv W)
   exact ⟨_, rfl, _, a1, a2⟩
 
 scoped notation:65 Γ " ⊢ " e1 " ≡ₚ " e2 " : " A:36 => NormalEq Γ e1 e2 A
@@ -1321,4 +3779,8 @@ theorem InferType.whRed (H1 : Γ ⊢ e ⤳ e') (H2 : Γ ⊢ e ▷ A) : Γ ⊢ e'
     let .lam b1 b2 := a1
     cases WHNF.forallE.whRedS a2
     exact .inst sorry b2
+  | major =>
+    -- Not provable as stated: `InferType.app` infers `B.inst a'` for the reduct, which is defeq
+    -- but not equal to `B.inst a`; the lemma would need restating up to defeq.
+    sorry
   | extra => sorry

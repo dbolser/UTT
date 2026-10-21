@@ -88,6 +88,14 @@ theorem Pattern.Matches.uniq {p : Pattern} {e : VExpr} {m1 m2 m1' m2'}
   | var _ ih => rename_i h; simp [ih h]
   | app _ _ ih1 ih2 => rename_i h2 h1; simp [ih1 h1, ih2 h2]; rfl
 
+/-- The levels bound by a match are the levels of the head constant of a level-wf term. -/
+theorem Pattern.Matches.levelWF {p : Pattern} {e : VExpr} {m1 m2}
+    (H : p.Matches e m1 m2) (he : e.LevelWF U) : ∀ u ∈ m1, u.WF U := by
+  induction H with
+  | const => exact he
+  | var _ ih => exact ih he.1
+  | app _ _ ih _ => exact ih he.1
+
 def Pattern.OnArgs (P : VExpr → Prop) : Pattern → Prop
   | .const .. => True
   | .var f => f.OnArgs P
